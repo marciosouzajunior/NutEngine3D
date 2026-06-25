@@ -6,6 +6,13 @@
 namespace nut {
 
 // Transform defines where an object is, how it is rotated, and its size.
+//
+// Mental model:
+// - Mesh = what shape the object has in local coordinates.
+// - Transform = where/how that shape appears in the scene.
+//
+// Changing a Transform does not rewrite the Mesh data. Instead, the renderer
+// combines the Mesh vertices with this Transform's matrix every frame.
 class Transform {
 public:
     math::Vec3 position;
@@ -25,6 +32,7 @@ public:
     // Calculate the Local Transformation Matrix.
     // Order: Scale, then Rotate, then Translate.
     // This matrix moves vertices from the object's local space to its parent's space.
+    // The original Mesh vertices stay unchanged; the matrix is applied while rendering.
     math::Mat4 getLocalMatrix() const {
         math::Mat4 t = math::Mat4::makeTranslation(position.x, position.y, position.z);
         

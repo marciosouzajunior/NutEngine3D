@@ -15,11 +15,15 @@ public:
     RaylibGraphics(int width, int height, const char* title) 
         : m_width(width), m_height(height) 
     {
+        // Raylib owns the OS window after InitWindow is called.
         InitWindow(width, height, title);
+
+        // Request 60 frames per second. Raylib will try to keep this pace.
         SetTargetFPS(60);
     }
 
     ~RaylibGraphics() override {
+        // CloseWindow releases the native window and Raylib resources.
         CloseWindow();
     }
 
@@ -35,24 +39,28 @@ public:
         ClearBackground(BLACK);
     }
 
+    void beginFrame() override {
+        // Raylib requires BeginDrawing before any draw calls for the frame.
+        BeginDrawing();
+    }
+
     void drawLine(int x1, int y1, int x2, int y2) override {
         DrawLine(x1, y1, x2, y2, WHITE);
     }
 
     void present() override {
-        // With Raylib, present is basically just ending the drawing process
-        // Note: BeginDrawing must be called externally or here before clearing.
-        // We will adapt our loop: BeginDrawing() -> clear() -> draw lines -> present()
+        // Raylib displays the frame when EndDrawing is called.
         EndDrawing();
     }
 
-    // Helper to call BeginDrawing
-    void beginFrame() {
-        BeginDrawing();
+    bool shouldClose() const override {
+        // WindowShouldClose becomes true when the user closes the window.
+        return WindowShouldClose();
     }
 
-    bool shouldClose() const {
-        return WindowShouldClose();
+    float deltaTime() const override {
+        // GetFrameTime returns seconds since the previous rendered frame.
+        return GetFrameTime();
     }
 };
 

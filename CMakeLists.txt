@@ -13,14 +13,40 @@ set(CMAKE_CXX_STANDARD 17)
 include(FetchContent)
 FetchContent_Declare(
     raylib
-    URL https://github.com/raysan5/raylib/archive/refs/tags/5.0.tar.gz
+    URL https://github.com/raysan5/raylib/archive/refs/tags/6.0.tar.gz
 )
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(raylib)
 
+# Dear ImGui + rlImGui for tools/editor UI
+FetchContent_Declare(
+    imgui
+    URL https://github.com/ocornut/imgui/archive/refs/heads/master.zip
+)
+FetchContent_Declare(
+    rlimgui
+    URL https://github.com/raylib-extras/rlImGui/archive/refs/heads/main.zip
+)
+FetchContent_MakeAvailable(imgui rlimgui)
+
+add_library(imgui STATIC
+    ${imgui_SOURCE_DIR}/imgui.cpp
+    ${imgui_SOURCE_DIR}/imgui_draw.cpp
+    ${imgui_SOURCE_DIR}/imgui_tables.cpp
+    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+)
+target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR})
+
+add_library(rlimgui STATIC
+    ${rlimgui_SOURCE_DIR}/rlImGui.cpp
+)
+target_include_directories(rlimgui PUBLIC ${rlimgui_SOURCE_DIR})
+target_link_libraries(rlimgui PUBLIC imgui raylib)
+
 # Source files
-file(GLOB_RECURSE SOURCES "src/*.cpp" "src/*.h")
+# CONFIGURE_DEPENDS asks CMake to refresh this list when new source files are added.
+file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS "src/*.cpp" "src/*.h")
 
 # Create executable
 add_executable(NutEngine3D ${SOURCES})
@@ -28,3 +54,8 @@ add_executable(NutEngine3D ${SOURCES})
 # Link Raylib
 target_link_libraries(NutEngine3D PRIVATE raylib)
 target_include_directories(NutEngine3D PRIVATE src)
+
+# Scene editor prototype
+add_executable(NutSceneEditor tools/scene_editor/main.cpp)
+target_link_libraries(NutSceneEditor PRIVATE raylib imgui rlimgui)
+target_compile_definitions(NutSceneEditor PRIVATE NUT_PROJECT_ROOT="${CMAKE_SOURCE_DIR}")

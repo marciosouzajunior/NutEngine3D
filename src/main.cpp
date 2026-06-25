@@ -1,72 +1,45 @@
-#include "core/World.h"
-#include "core/Camera.h"
-#include "core/Mesh.h"
-#include "core/Object3D.h"
+#include "core/Engine.h"
+#include "core/SceneManager.h"
 #include "render/RaylibGraphics.h"
 #include "render/WireframeRenderer.h"
+#include "scene/LoadedScene.h"
+#include "scene/SceneLoader.h"
+#include "scene/ScriptRegistry.h"
+#include "game_scripts/SpinScript.h"
 #include <iostream>
 
 int main() {
     std::cout << "Starting NutEngine3D V0..." << std::endl;
 
-    // 1. Initialize Raylib Graphics backend
-    const int screenWidth = 800;
-    const int screenHeight = 600;
-    nut::RaylibGraphics graphics(screenWidth, screenHeight, "NutEngine3D V0 - Wireframe Cube");
+    // 1. Initialize the Raylib graphics backend.
+    // This simulates a small 320x240 TFT screen on the desktop.
+    const int screenWidth = 320;
+    const int screenHeight = 240;
+    nut::RaylibGraphics graphics(screenWidth, screenHeight, "NutEngine3D - TFT Simulator (320x240)");
 
-    // 2. Initialize Renderer
+    // 2. Create the renderer and engine.
+    // The renderer knows how to draw a Scene. The engine knows when to update and draw.
     nut::WireframeRenderer renderer(&graphics);
+    nut::Engine engine(&graphics, &renderer);
 
-    // 3. Create a World and Camera
-    nut::World world;
-    nut::Camera camera;
-    // Move the camera back so we can see the origin
-    camera.transform.position = nut::math::Vec3(0, 0, -8);
+    // 3. Register scripts that scene JSON files are allowed to instantiate.
+    nut::ScriptRegistry scripts;
+    scripts.registerScript("SpinScript", SpinScript::createFromConfig);
 
-    // 4. Create Geometry (Mesh)
-    nut::Mesh cubeMesh = nut::Mesh::createCube();
-
-    // 5. Create Objects and Scene Graph
-    
-    // Parent object (center cube)
-    nut::Object3D parentCube;
-    parentCube.mesh = &cubeMesh;
-    parentCube.transform.position = nut::math::Vec3(0, 0, 0);
-    parentCube.transform.scale = nut::math::Vec3(1.0f, 1.0f, 1.0f);
-    
-    // Child object (orbiting cube)
-    nut::Object3D childCube;
-    childCube.mesh = &cubeMesh;
-    // Set position relative to the parent. It will be 3 units to the right of the parent.
-    childCube.transform.position = nut::math::Vec3(3, 0, 0);
-    childCube.transform.scale = nut::math::Vec3(0.5f, 0.5f, 0.5f); // Half the size
-
-    // Link the child to the parent (Scene Graph)
-    parentCube.addChild(&childCube);
-
-    // Add ONLY the parent to the world. The renderer will find the child automatically.
-    world.add(&parentCube);
-
-    // 6. Main Loop
-    while (!graphics.shouldClose()) {
-        // Animation:
-        // Rotate the parent. Because of the Scene Graph, the child will orbit the parent!
-        parentCube.transform.rotation.y += 0.02f;
-        parentCube.transform.rotation.x += 0.01f;
-
-        // We can also rotate the child locally. It will spin on its own axis while orbiting.
-        childCube.transform.rotation.x -= 0.05f;
-        childCube.transform.rotation.z += 0.05f;
-
-        // Render pass
-        graphics.beginFrame();
-        graphics.clear(); // Black background
-
-        // The renderer calculates matrices and draws the lines
-        renderer.render(world, camera);
-
-        graphics.present(); // Swap buffers
+    // 4. Load the demo scene from JSON.
+    nut::LoadedScene scene;
+    if (!nut::SceneLoader::load("assets/scenes/demo.nutscene", scene, scripts)) {
+        std::cout << "Failed to load assets/scenes/demo.nutscene" << std::endl;
+        return 1;
     }
+
+    // 5. Register scenes and choose which one starts first.
+    nut::SceneManager sceneManager;
+    sceneManager.registerScene("Demo", &scene);
+    sceneManager.changeScene("Demo");
+
+    // 6. Let the engine run the active scene.
+    engine.run(sceneManager);
 
     std::cout << "Shutting down..." << std::endl;
     return 0;

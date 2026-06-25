@@ -1,0 +1,43 @@
+{
+  "name": "Demo",
+  "camera": {
+    "position": [0, 0, -8],
+    "rotation": [0, 0, 0]
+  },
+  "objects": [
+    {
+      "name": "OrbitPivot",
+      "position": [0, 0, 0],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1],
+      "scripts": [
+        {
+          "type": "SpinScript",
+          "rotationSpeed": [0.6, 1.2, 0]
+        }
+      ],
+      "children": [
+        {
+          "name": "CenterCube",
+          "mesh": "assets/models/cube.obj",
+          "position": [0, 0, 0],
+          "rotation": [0, 0, 0],
+          "scale": [0.08, 0.08, 0.08]
+        },
+        {
+          "name": "OrbitingSphere",
+          "mesh": "assets/models/sphere.obj",
+          "position": [2.4, 0, 0],
+          "rotation": [0, 0, 0],
+          "scale": [0.08, 0.08, 0.08],
+          "scripts": [
+            {
+              "type": "SpinScript",
+              "rotationSpeed": [-2.0, 1.0, 2.5]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,23 +1,23 @@
 #pragma once
 
 #include "Graphics.h"
-#include "../core/Camera.h"
-#include "../core/World.h"
+#include "../core/Scene.h"
 #include "../math/Vec2.h"
 
 namespace nut {
 
-// WireframeRenderer takes a World and a Camera, computes the matrices, 
-// and draws the 3D scene onto a 2D Graphics interface.
+// WireframeRenderer takes a Scene, computes the camera/object matrices,
+// and draws the 3D objects onto a 2D Graphics interface.
 class WireframeRenderer {
 private:
     Graphics* m_graphics;
 
     // Recursively renders an object and its children
-    void renderObject(Object3D* obj, const math::Mat4& viewProjMatrix) {
+    void renderObject(GameObject* obj, const math::Mat4& viewProjMatrix) {
         if (!obj) return;
 
-        // 1. Calculate the World Matrix (this object's transformation + its parent's)
+        // 1. Calculate the World Matrix (this object's transformation + its parent's).
+        // This matrix says how to place the mesh in the scene for this frame.
         math::Mat4 worldMatrix = obj->transform.getWorldMatrix();
 
         // 2. Combine the World Matrix with the View/Projection Matrices
@@ -30,7 +30,7 @@ private:
         }
 
         // 4. Render all children (they will compute their own world matrix based on this parent)
-        for (Object3D* child : obj->children) {
+        for (GameObject* child : obj->children) {
             renderObject(child, viewProjMatrix);
         }
     }
@@ -45,7 +45,9 @@ private:
         int halfHeight = m_graphics->height() / 2;
 
         for (size_t i = 0; i < mesh->vertices.size(); ++i) {
-            // Apply Model-View-Projection matrix to the local vertex
+            // Apply Model-View-Projection matrix to the local vertex.
+            // This transforms a copy of the mesh position for drawing; it does not
+            // modify mesh->vertices.
             math::Vec3 ndc = mvpMatrix * mesh->vertices[i];
             
             // Simple clipping: if z is outside the normalized device coordinates range, don't draw
@@ -80,24 +82,24 @@ private:
 public:
     WireframeRenderer(Graphics* graphics) : m_graphics(graphics) {}
 
-    // Renders the entire world from the perspective of the camera
-    void render(World& world, Camera& camera) {
+    // Renders the entire scene from the perspective of its camera.
+    void render(Scene& scene) {
         if (!m_graphics) return;
 
         // Calculate aspect ratio
         float aspect = static_cast<float>(m_graphics->width()) / static_cast<float>(m_graphics->height());
 
         // 1. Get Camera View Matrix
-        math::Mat4 viewMatrix = camera.getViewMatrix();
+        math::Mat4 viewMatrix = scene.camera().getViewMatrix();
 
         // 2. Get Camera Projection Matrix
-        math::Mat4 projMatrix = camera.getProjectionMatrix(aspect);
+        math::Mat4 projMatrix = scene.camera().getProjectionMatrix(aspect);
 
         // Pre-combine Projection and View matrices to save calculations per object
         math::Mat4 viewProjMatrix = projMatrix * viewMatrix;
 
         // Traverse the scene graph starting from the root objects
-        for (Object3D* obj : world.rootObjects) {
+        for (GameObject* obj : scene.rootObjects()) {
             renderObject(obj, viewProjMatrix);
         }
     }

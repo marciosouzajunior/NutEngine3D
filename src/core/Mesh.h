@@ -13,7 +13,16 @@ struct Edge {
 };
 
 // Mesh holds the raw geometry data: vertices (points) and edges (lines).
-// These are defined in "Local Space", meaning they are relative to the object's center (0,0,0).
+// These are defined in local coordinates, meaning they are relative to the
+// object's own origin, usually around (0,0,0).
+//
+// Mental model:
+// - Mesh = what shape the object has.
+// - Transform = where/how that shape appears in the scene.
+// - GameObject = the thing that combines Mesh, Transform, and later behavior.
+//
+// Mesh can be created in code, like createCube(), or imported from a simple
+// asset format such as OBJ using ObjLoader.
 class Mesh {
 public:
     std::vector<math::Vec3> vertices;
