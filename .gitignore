@@ -10,8 +10,8 @@ Makefile
 # IDE and OS files
 .vscode/
 .idea/
-tools/scene_editor/nutscene_editor.ini
-tools/scene_editor/imgui.ini
+scene_editor/nutscene_editor.ini
+scene_editor/imgui.ini
 *.suo
 *.sln
 *.user

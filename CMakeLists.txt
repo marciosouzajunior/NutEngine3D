@@ -19,7 +19,7 @@ set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(raylib)
 
-# Dear ImGui + rlImGui for tools/editor UI
+# Dear ImGui + rlImGui for the scene editor UI
 FetchContent_Declare(
     imgui
     URL https://github.com/ocornut/imgui/archive/refs/heads/master.zip
@@ -56,6 +56,6 @@ target_link_libraries(NutEngine3D PRIVATE raylib)
 target_include_directories(NutEngine3D PRIVATE src)
 
 # Scene editor prototype
-add_executable(NutSceneEditor tools/scene_editor/main.cpp)
+add_executable(NutSceneEditor scene_editor/main.cpp)
 target_link_libraries(NutSceneEditor PRIVATE raylib imgui rlimgui)
 target_compile_definitions(NutSceneEditor PRIVATE NUT_PROJECT_ROOT="${CMAKE_SOURCE_DIR}")

@@ -155,7 +155,7 @@ The Raylib dependency is automatically fetched and configured by CMake, you don'
    - On Linux/Mac: `./build/NutEngine3D`
 
 On Windows, you can also use `build.bat` and `run.bat` after the build folder has been generated.
-The scene editor has its own helper scripts in `tools/scene_editor/build.bat` and `tools/scene_editor/run.bat`.
+The scene editor has its own helper scripts in `scene_editor/build.bat` and `scene_editor/run.bat`.
 
 ## Where to change settings
 

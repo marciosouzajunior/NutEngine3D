@@ -390,13 +390,13 @@ int main() {
 
     rlImGuiBeginInitImGui();
     ImGuiIO& io = ImGui::GetIO();
-    static const std::string editorIniPath = std::string(NUT_PROJECT_ROOT) + "/tools/scene_editor/nutscene_editor.ini";
+    static const std::string editorIniPath = std::string(NUT_PROJECT_ROOT) + "/scene_editor/nutscene_editor.ini";
     const bool hasSavedLayout = FileExists(editorIniPath.c_str());
 
     // ImGui stores window positions and sizes in an .ini file.
     // Use a project-specific file so the scene editor keeps its own layout.
     io.IniFilename = editorIniPath.c_str();
-    const std::string editorFontPath = std::string(NUT_PROJECT_ROOT) + "/tools/scene_editor/assets/fonts/ProggyClean.ttf";
+    const std::string editorFontPath = std::string(NUT_PROJECT_ROOT) + "/scene_editor/assets/fonts/ProggyClean.ttf";
     if (FileExists(editorFontPath.c_str())) {
         io.Fonts->AddFontFromFileTTF(editorFontPath.c_str(), 16.0f);
     } else {
