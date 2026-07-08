@@ -84,6 +84,18 @@ nut::LoadedScene scene;
 nut::SceneLoader::load("assets/scenes/demo.nutscene", scene, scripts);
 ```
 
+Current script source convention:
+
+- Native gameplay scripts live in `src/game_scripts/`.
+- The JSON `type` must match the compiled C++ script class name registered in `ScriptRegistry`.
+- The scene editor currently resolves script source files by convention as `src/game_scripts/<Type>.cpp`.
+- Header files follow the same convention as `src/game_scripts/<Type>.h`.
+
+Example:
+
+- `SpinScript` -> `src/game_scripts/SpinScript.cpp`
+- `SpinScript` -> `src/game_scripts/SpinScript.h`
+
 ## How Scene Loading Works
 
 The scene file is data. It describes objects, transforms, meshes, scripts, and hierarchy. The C++ code still provides the real script classes.

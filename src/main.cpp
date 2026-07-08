@@ -5,6 +5,7 @@
 #include "scene/LoadedScene.h"
 #include "scene/SceneLoader.h"
 #include "scene/ScriptRegistry.h"
+#include "game_scripts/DummyScript.h"
 #include "game_scripts/SpinScript.h"
 #include <iostream>
 
@@ -24,6 +25,7 @@ int main() {
 
     // 3. Register scripts that scene JSON files are allowed to instantiate.
     nut::ScriptRegistry scripts;
+    scripts.registerScript("DummyScript", DummyScript::createFromConfig);
     scripts.registerScript("SpinScript", SpinScript::createFromConfig);
 
     // 4. Load the demo scene from JSON.

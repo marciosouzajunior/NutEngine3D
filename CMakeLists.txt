@@ -28,7 +28,15 @@ FetchContent_Declare(
     rlimgui
     URL https://github.com/raylib-extras/rlImGui/archive/refs/heads/main.zip
 )
+FetchContent_Declare(
+    imgui_color_text_edit
+    URL https://github.com/BalazsJako/ImGuiColorTextEdit/archive/refs/heads/master.zip
+)
 FetchContent_MakeAvailable(imgui rlimgui)
+FetchContent_GetProperties(imgui_color_text_edit)
+if(NOT imgui_color_text_edit_POPULATED)
+    FetchContent_Populate(imgui_color_text_edit)
+endif()
 
 add_library(imgui STATIC
     ${imgui_SOURCE_DIR}/imgui.cpp
@@ -44,6 +52,15 @@ add_library(rlimgui STATIC
 target_include_directories(rlimgui PUBLIC ${rlimgui_SOURCE_DIR})
 target_link_libraries(rlimgui PUBLIC imgui raylib)
 
+add_library(imgui_color_text_edit STATIC
+    ${imgui_color_text_edit_SOURCE_DIR}/TextEditor.cpp
+)
+target_include_directories(imgui_color_text_edit PUBLIC
+    ${imgui_color_text_edit_SOURCE_DIR}
+    ${imgui_SOURCE_DIR}
+)
+target_link_libraries(imgui_color_text_edit PUBLIC imgui)
+
 # Source files
 # CONFIGURE_DEPENDS asks CMake to refresh this list when new source files are added.
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS "src/*.cpp" "src/*.h")
@@ -56,6 +73,10 @@ target_link_libraries(NutEngine3D PRIVATE raylib)
 target_include_directories(NutEngine3D PRIVATE src)
 
 # Scene editor prototype
-add_executable(NutSceneEditor scene_editor/main.cpp)
+add_executable(NutSceneEditor
+    scene_editor/main.cpp
+    src/scene/Json.cpp
+)
 target_link_libraries(NutSceneEditor PRIVATE raylib imgui rlimgui)
+target_link_libraries(NutSceneEditor PRIVATE imgui_color_text_edit)
 target_compile_definitions(NutSceneEditor PRIVATE NUT_PROJECT_ROOT="${CMAKE_SOURCE_DIR}")

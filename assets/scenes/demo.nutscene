@@ -14,6 +14,11 @@
         {
           "type": "SpinScript",
           "rotationSpeed": [0.6, 1.2, 0]
+        },
+        {
+          "type": "DummyScript",
+          "enabled": true,
+          "note": "Second inspector block test"
         }
       ],
       "children": [

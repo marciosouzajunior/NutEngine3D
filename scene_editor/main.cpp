@@ -1,8 +1,24 @@
 #include <raylib.h>
 #include <rlImGui.h>
 #include <imgui.h>
+#include <imgui_internal.h>
 
+#include <cstdint>
+#include <TextEditor.h>
+
+#include "../src/scene/Json.h"
+
+#include <algorithm>
+#include <cstring>
+#include <cstdlib>
+#include <fstream>
+#include <map>
+#include <memory>
+#include <set>
+#include <sstream>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -29,6 +45,87 @@ struct EditorLayout {
     ImVec2 assetsPos;
     ImVec2 assetsSize;
 };
+
+struct EditorScriptData {
+    std::string type;
+    std::vector<std::pair<std::string, std::string>> properties;
+    bool expanded = true;
+};
+
+struct EditorObjectData {
+    std::string name;
+    std::string path;
+    std::string meshPath;
+    float position[3] = {0.0f, 0.0f, 0.0f};
+    float rotation[3] = {0.0f, 0.0f, 0.0f};
+    float scale[3] = {1.0f, 1.0f, 1.0f};
+    std::vector<EditorScriptData> scripts;
+    std::vector<std::unique_ptr<EditorObjectData>> children;
+};
+
+struct EditorSceneData {
+    std::string scenePath;
+    std::string sceneName = "Untitled";
+    std::vector<std::unique_ptr<EditorObjectData>> roots;
+    std::vector<std::string> assetPaths;
+    std::vector<std::string> consoleLines;
+    EditorObjectData* selectedObject = nullptr;
+    bool loaded = false;
+    bool dirty = false;
+};
+
+struct InspectorState {
+    EditorObjectData* syncedObject = nullptr;
+    char nameBuffer[256] = {};
+    char positionBuffers[3][32] = {};
+    char rotationBuffers[3][32] = {};
+    char scaleBuffers[3][32] = {};
+};
+
+std::map<std::string, bool> g_scriptExpansionStates;
+EditorSceneData* g_scriptExpansionSceneData = nullptr;
+std::map<std::string, std::unique_ptr<TextEditor>> g_sourceEditors;
+
+void drawScriptSourceRow(
+    const std::string& sourceDisplay,
+    const std::string& popupId,
+    bool hasSource,
+    float labelWidth
+);
+void drawScriptSourceModal(const EditorScriptData& script, const std::string& sourcePath);
+
+std::string buildObjectPath(const std::string& parentPath, const std::string& objectName, size_t siblingIndex) {
+    std::ostringstream stream;
+    if (!parentPath.empty()) {
+        stream << parentPath << "/";
+    }
+    stream << siblingIndex << ":" << objectName;
+    return stream.str();
+}
+
+std::string buildScriptStateKey(const EditorObjectData& object, size_t scriptIndex, const EditorScriptData& script) {
+    std::ostringstream stream;
+    stream << object.path << "#script:" << scriptIndex << ":" << script.type;
+    return stream.str();
+}
+
+void* scriptExpansionSettingsReadOpen(ImGuiContext*, ImGuiSettingsHandler*, const char* name) {
+    if (std::strcmp(name, "ScriptExpansion") == 0) {
+        return reinterpret_cast<void*>(1);
+    }
+    return nullptr;
+}
+
+void scriptExpansionSettingsReadLine(ImGuiContext*, ImGuiSettingsHandler*, void*, const char* line) {
+    const char* separator = std::strchr(line, '=');
+    if (!separator) {
+        return;
+    }
+
+    std::string key(line, static_cast<size_t>(separator - line));
+    std::string value(separator + 1);
+    g_scriptExpansionStates[key] = value == "1";
+}
 
 EditorLayout calculateResponsiveLayout(float contentTop) {
     ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -104,8 +201,6 @@ void applyMotifStyle() {
     colors[ImGuiCol_FrameBg] = ImVec4(0.86f, 0.86f, 0.80f, 1.00f);
     colors[ImGuiCol_FrameBgHovered] = ImVec4(0.95f, 0.95f, 0.88f, 1.00f);
     colors[ImGuiCol_FrameBgActive] = ImVec4(0.62f, 0.62f, 0.58f, 1.00f);
-    // Motif/CDE windows commonly use muted gray or teal title areas with black text.
-    // ImGui shares the normal text color with title text, so keep title bars light enough to read.
     colors[ImGuiCol_TitleBg] = ImVec4(0.58f, 0.60f, 0.56f, 1.00f);
     colors[ImGuiCol_TitleBgActive] = ImVec4(0.35f, 0.55f, 0.57f, 1.00f);
     colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.58f, 0.60f, 0.56f, 1.00f);
@@ -149,6 +244,13 @@ void drawSunkenBevel(ImDrawList* drawList, ImVec2 min, ImVec2 max) {
     drawList->AddLine(ImVec2(max.x - 1.0f, min.y + 1.0f), max, motif::PanelLight);
 }
 
+void drawSunkenPanelFrame() {
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    ImVec2 min = ImGui::GetItemRectMin();
+    ImVec2 max = ImGui::GetItemRectMax();
+    drawSunkenBevel(drawList, min, max);
+}
+
 void drawDesktopPattern() {
     ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImDrawList* drawList = ImGui::GetBackgroundDrawList();
@@ -157,7 +259,6 @@ void drawDesktopPattern() {
 
     drawList->AddRectFilled(min, max, motif::DarkDesktop);
 
-    // Keep the desktop texture cheap. Dense speckles can exceed ImGui's 16-bit draw index limit.
     ImU32 lightLine = IM_COL32(88, 104, 108, 42);
     ImU32 darkLine = IM_COL32(54, 66, 70, 38);
     for (float y = min.y; y < max.y; y += 24.0f) {
@@ -169,32 +270,286 @@ void drawDesktopPattern() {
 }
 
 void applyPanelLayout(ImVec2 pos, ImVec2 size, bool forceLayout) {
-    // Force only the startup/reset layout. After that, ImGui keeps panels movable and resizable.
     ImGuiCond condition = forceLayout ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
     ImGui::SetNextWindowPos(pos, condition);
     ImGui::SetNextWindowSize(size, condition);
 }
 
-bool drawMainMenu() {
+bool readTextFile(const std::string& path, std::string& outText) {
+    std::ifstream file(path);
+    if (!file.is_open()) {
+        return false;
+    }
+
+    std::ostringstream stream;
+    stream << file.rdbuf();
+    outText = stream.str();
+    return true;
+}
+
+void readVec3(const nut::Json& value, float outValues[3], const float defaults[3]) {
+    outValues[0] = defaults[0];
+    outValues[1] = defaults[1];
+    outValues[2] = defaults[2];
+
+    if (!value.isArray()) {
+        return;
+    }
+
+    for (size_t i = 0; i < 3 && i < value.size(); ++i) {
+        outValues[i] = static_cast<float>(value.at(i).asNumber(defaults[i]));
+    }
+}
+
+std::string formatJsonValue(const nut::Json& value) {
+    if (value.isString()) {
+        return value.asString();
+    }
+
+    if (value.isNumber()) {
+        std::ostringstream stream;
+        stream << value.asNumber();
+        return stream.str();
+    }
+
+    if (value.isBool()) {
+        return value.asBool() ? "true" : "false";
+    }
+
+    if (value.isArray()) {
+        std::ostringstream stream;
+        stream << "[";
+        for (size_t i = 0; i < value.size(); ++i) {
+            if (i > 0) {
+                stream << ", ";
+            }
+            stream << formatJsonValue(value.at(i));
+        }
+        stream << "]";
+        return stream.str();
+    }
+
+    if (value.isObject()) {
+        return "{...}";
+    }
+
+    return "null";
+}
+
+EditorScriptData parseScript(const nut::Json& scriptJson) {
+    EditorScriptData script;
+    script.type = scriptJson.get("type").asString("UnknownScript");
+
+    if (!scriptJson.isObject()) {
+        return script;
+    }
+
+    for (const auto& entry : scriptJson.objectValue) {
+        if (entry.first == "type") {
+            continue;
+        }
+        script.properties.push_back({entry.first, formatJsonValue(entry.second)});
+    }
+
+    return script;
+}
+
+std::unique_ptr<EditorObjectData> parseObject(
+    const nut::Json& objectJson,
+    std::set<std::string>& assets,
+    const std::string& parentPath,
+    size_t siblingIndex,
+    size_t& objectCount,
+    size_t& scriptCount
+) {
+    auto object = std::make_unique<EditorObjectData>();
+    object->name = objectJson.get("name").asString("GameObject");
+    object->path = buildObjectPath(parentPath, object->name, siblingIndex);
+    object->meshPath = objectJson.get("mesh").asString("");
+
+    static const float defaultPosition[3] = {0.0f, 0.0f, 0.0f};
+    static const float defaultRotation[3] = {0.0f, 0.0f, 0.0f};
+    static const float defaultScale[3] = {1.0f, 1.0f, 1.0f};
+    readVec3(objectJson.get("position"), object->position, defaultPosition);
+    readVec3(objectJson.get("rotation"), object->rotation, defaultRotation);
+    readVec3(objectJson.get("scale"), object->scale, defaultScale);
+
+    if (!object->meshPath.empty()) {
+        assets.insert(object->meshPath);
+    }
+
+    const nut::Json& scripts = objectJson.get("scripts");
+    if (scripts.isArray()) {
+        for (size_t i = 0; i < scripts.size(); ++i) {
+            object->scripts.push_back(parseScript(scripts.at(i)));
+            ++scriptCount;
+        }
+    }
+
+    const nut::Json& children = objectJson.get("children");
+    if (children.isArray()) {
+        for (size_t i = 0; i < children.size(); ++i) {
+            object->children.push_back(parseObject(children.at(i), assets, object->path, i, objectCount, scriptCount));
+        }
+    }
+
+    ++objectCount;
+    return object;
+}
+
+EditorObjectData* findFirstObject(std::vector<std::unique_ptr<EditorObjectData>>& roots) {
+    if (roots.empty()) {
+        return nullptr;
+    }
+    return roots.front().get();
+}
+
+void appendConsoleLine(EditorSceneData& sceneData, const std::string& line) {
+    sceneData.consoleLines.push_back(line);
+}
+
+void formatFloatToBuffer(float value, char* buffer, size_t bufferSize) {
+    std::snprintf(buffer, bufferSize, "%.3f", value);
+}
+
+bool loadSceneData(EditorSceneData& sceneData, const std::string& scenePathOnDisk, const std::string& scenePathDisplay) {
+    sceneData = EditorSceneData();
+    sceneData.scenePath = scenePathDisplay;
+    sceneData.assetPaths.push_back(scenePathDisplay);
+
+    std::string text;
+    if (!readTextFile(scenePathOnDisk, text)) {
+        appendConsoleLine(sceneData, "> Failed to read scene: " + scenePathDisplay);
+        return false;
+    }
+
+    nut::Json root;
+    std::string error;
+    if (!nut::Json::parse(text, root, &error)) {
+        appendConsoleLine(sceneData, "> Failed to parse scene JSON: " + error);
+        return false;
+    }
+
+    if (!root.isObject()) {
+        appendConsoleLine(sceneData, "> Invalid .nutscene: root must be a JSON object.");
+        return false;
+    }
+
+    sceneData.sceneName = root.get("name").asString("Untitled");
+
+    std::set<std::string> uniqueAssets;
+    uniqueAssets.insert(scenePathDisplay);
+
+    size_t objectCount = 0;
+    size_t scriptCount = 0;
+    const nut::Json& objects = root.get("objects");
+    if (objects.isArray()) {
+        for (size_t i = 0; i < objects.size(); ++i) {
+            sceneData.roots.push_back(parseObject(objects.at(i), uniqueAssets, "", i, objectCount, scriptCount));
+        }
+    } else {
+        appendConsoleLine(sceneData, "> Invalid .nutscene: missing objects array.");
+        return false;
+    }
+
+    sceneData.assetPaths.assign(uniqueAssets.begin(), uniqueAssets.end());
+    sceneData.selectedObject = findFirstObject(sceneData.roots);
+    sceneData.loaded = true;
+
+    appendConsoleLine(sceneData, "> Loaded scene: " + scenePathDisplay);
+    appendConsoleLine(sceneData, "> Scene name: " + sceneData.sceneName);
+
+    std::ostringstream summary;
+    summary << "> Parsed " << objectCount << " object(s), "
+            << scriptCount << " script instance(s), "
+            << sceneData.assetPaths.size() << " asset reference(s).";
+    appendConsoleLine(sceneData, summary.str());
+    appendConsoleLine(sceneData, "> Inspector edits are local only; Save is not wired yet.");
+    return true;
+}
+
+void collectScriptExpansionStates(
+    const EditorObjectData& object,
+    std::map<std::string, bool>& states
+) {
+    for (size_t i = 0; i < object.scripts.size(); ++i) {
+        const EditorScriptData& script = object.scripts[i];
+        states[buildScriptStateKey(object, i, script)] = script.expanded;
+    }
+
+    for (const std::unique_ptr<EditorObjectData>& child : object.children) {
+        collectScriptExpansionStates(*child, states);
+    }
+}
+
+void applyScriptExpansionStates(
+    EditorObjectData& object,
+    const std::map<std::string, bool>& states
+) {
+    for (size_t i = 0; i < object.scripts.size(); ++i) {
+        EditorScriptData& script = object.scripts[i];
+        const std::string key = buildScriptStateKey(object, i, script);
+        auto it = states.find(key);
+        if (it != states.end()) {
+            script.expanded = it->second;
+        }
+    }
+
+    for (std::unique_ptr<EditorObjectData>& child : object.children) {
+        applyScriptExpansionStates(*child, states);
+    }
+}
+
+void applyScriptExpansionStates(
+    std::vector<std::unique_ptr<EditorObjectData>>& roots,
+    const std::map<std::string, bool>& states
+) {
+    for (std::unique_ptr<EditorObjectData>& root : roots) {
+        applyScriptExpansionStates(*root, states);
+    }
+}
+
+void scriptExpansionSettingsWriteAll(ImGuiContext*, ImGuiSettingsHandler* handler, ImGuiTextBuffer* outBuf) {
+    if (!g_scriptExpansionSceneData) {
+        return;
+    }
+
+    g_scriptExpansionStates.clear();
+    for (const std::unique_ptr<EditorObjectData>& root : g_scriptExpansionSceneData->roots) {
+        collectScriptExpansionStates(*root, g_scriptExpansionStates);
+    }
+
+    if (g_scriptExpansionStates.empty()) {
+        return;
+    }
+
+    outBuf->appendf("[%s][ScriptExpansion]\n", handler->TypeName);
+    for (const auto& entry : g_scriptExpansionStates) {
+        outBuf->appendf("%s=%d\n", entry.first.c_str(), entry.second ? 1 : 0);
+    }
+    outBuf->append("\n");
+}
+
+bool drawMainMenu(const EditorSceneData& sceneData) {
     bool resetLayout = false;
-    const char* scenePath = "assets/scenes/demo.nutscene";
+    const char* scenePath = sceneData.scenePath.c_str();
 
     if (ImGui::BeginMainMenuBar()) {
         if (ImGui::BeginMenu("File")) {
-            ImGui::MenuItem("Open Scene...");
-            ImGui::MenuItem("Save");
-            ImGui::MenuItem("Save As...");
+            ImGui::MenuItem("Open Scene...", nullptr, false, false);
+            ImGui::MenuItem("Save", nullptr, false, false);
+            ImGui::MenuItem("Save As...", nullptr, false, false);
             ImGui::Separator();
             ImGui::MenuItem("Exit");
             ImGui::EndMenu();
         }
 
         if (ImGui::BeginMenu("Edit")) {
-            ImGui::MenuItem("Undo");
-            ImGui::MenuItem("Redo");
+            ImGui::MenuItem("Undo", nullptr, false, false);
+            ImGui::MenuItem("Redo", nullptr, false, false);
             ImGui::Separator();
-            ImGui::MenuItem("Duplicate Object");
-            ImGui::MenuItem("Delete Object");
+            ImGui::MenuItem("Duplicate Object", nullptr, false, false);
+            ImGui::MenuItem("Delete Object", nullptr, false, false);
             ImGui::EndMenu();
         }
 
@@ -207,9 +562,9 @@ bool drawMainMenu() {
         }
 
         if (ImGui::BeginMenu("Scene")) {
-            ImGui::MenuItem("Add Empty Object");
-            ImGui::MenuItem("Add Mesh Object");
-            ImGui::MenuItem("Validate Scene");
+            ImGui::MenuItem("Add Empty Object", nullptr, false, false);
+            ImGui::MenuItem("Add Mesh Object", nullptr, false, false);
+            ImGui::MenuItem("Validate Scene", nullptr, false, false);
             ImGui::EndMenu();
         }
 
@@ -228,11 +583,10 @@ bool drawMainMenu() {
     return resetLayout;
 }
 
-float drawToolbar(float menuHeight) {
+float drawToolbar(float menuHeight, const EditorSceneData& sceneData) {
     ImGuiViewport* viewport = ImGui::GetMainViewport();
     const float toolbarHeight = 44.0f;
 
-    // The first frame can report WorkPos before the main menu adjusts it, so reserve menu space explicitly.
     ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x, viewport->Pos.y + menuHeight));
     ImGui::SetNextWindowSize(ImVec2(viewport->Size.x, toolbarHeight));
 
@@ -248,6 +602,7 @@ float drawToolbar(float menuHeight) {
     ImVec2 toolbarMax(toolbarMin.x + ImGui::GetWindowWidth(), toolbarMin.y + ImGui::GetWindowHeight());
     drawRaisedBevel(ImGui::GetWindowDrawList(), toolbarMin, toolbarMax);
 
+    ImGui::BeginDisabled();
     ImGui::Button("Open", ImVec2(72, 0));
     ImGui::SameLine();
     ImGui::Button("Save", ImVec2(72, 0));
@@ -255,41 +610,82 @@ float drawToolbar(float menuHeight) {
     ImGui::Button("Add Object", ImVec2(112, 0));
     ImGui::SameLine();
     ImGui::Button("Add Script", ImVec2(104, 0));
+    ImGui::EndDisabled();
 
-    const char* status = "UI mockup only - no scene editing wired yet";
-    ImVec2 statusSize = ImGui::CalcTextSize(status);
+    std::string status;
+    if (!sceneData.loaded) {
+        status = "Scene load failed - showing diagnostics in Console";
+    } else if (sceneData.dirty) {
+        status = "Unsaved local changes in memory";
+    } else {
+        status = "Scene loaded from JSON";
+    }
+    ImVec2 statusSize = ImGui::CalcTextSize(status.c_str());
     float statusX = ImGui::GetWindowWidth() - statusSize.x - 16.0f;
     if (statusX > ImGui::GetCursorPosX()) {
         ImGui::SameLine(statusX);
-        ImGui::TextDisabled("%s", status);
+        ImGui::TextDisabled("%s", status.c_str());
     }
     ImGui::End();
 
     return viewport->Pos.y + menuHeight + toolbarHeight;
 }
 
-void drawHierarchy(const EditorLayout& layout, bool forceLayout) {
+void drawHierarchyNode(EditorObjectData& object, EditorSceneData& sceneData) {
+    const bool isSelected = sceneData.selectedObject == &object;
+    ImGuiTreeNodeFlags flags =
+        ImGuiTreeNodeFlags_OpenOnArrow |
+        ImGuiTreeNodeFlags_OpenOnDoubleClick |
+        ImGuiTreeNodeFlags_DefaultOpen;
+    if (object.children.empty()) {
+        flags |= ImGuiTreeNodeFlags_Leaf;
+    }
+    if (isSelected) {
+        flags |= ImGuiTreeNodeFlags_Selected;
+    }
+
+    bool isOpen = ImGui::TreeNodeEx(static_cast<void*>(&object), flags, "%s", object.name.c_str());
+    if (ImGui::IsItemClicked()) {
+        sceneData.selectedObject = &object;
+    }
+
+    if (isOpen) {
+        for (std::unique_ptr<EditorObjectData>& child : object.children) {
+            drawHierarchyNode(*child, sceneData);
+        }
+        ImGui::TreePop();
+    }
+}
+
+void drawHierarchy(const EditorLayout& layout, bool forceLayout, EditorSceneData& sceneData) {
     applyPanelLayout(layout.hierarchyPos, layout.hierarchySize, forceLayout);
 
     ImGui::Begin("Scene Hierarchy");
-    ImGui::TextDisabled("Scene: Demo");
+    ImGui::TextDisabled("Scene: %s", sceneData.sceneName.c_str());
     ImGui::Separator();
 
-    ImGuiTreeNodeFlags rootFlags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Selected | ImGuiTreeNodeFlags_OpenOnArrow;
-    if (ImGui::TreeNodeEx("OrbitPivot", rootFlags)) {
-        ImGui::TreeNodeEx("CenterCube", ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen);
-        ImGui::TreeNodeEx("OrbitingSphere", ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen);
-        ImGui::TreePop();
+    if (!sceneData.loaded) {
+        ImGui::TextDisabled("No scene data available.");
+    } else if (sceneData.roots.empty()) {
+        ImGui::TextDisabled("Scene has no root objects.");
+    } else {
+        for (std::unique_ptr<EditorObjectData>& root : sceneData.roots) {
+            drawHierarchyNode(*root, sceneData);
+        }
     }
 
     ImGui::End();
 }
 
-void drawViewport(const EditorLayout& layout, bool forceLayout) {
+void drawViewport(const EditorLayout& layout, bool forceLayout, const EditorSceneData& sceneData) {
     applyPanelLayout(layout.viewportPos, layout.viewportSize, forceLayout);
 
     ImGui::Begin("Viewport");
-    ImGui::TextDisabled("Wireframe preview placeholder");
+    if (sceneData.selectedObject) {
+        ImGui::TextDisabled("Preview placeholder for: %s", sceneData.selectedObject->name.c_str());
+    } else {
+        ImGui::TextDisabled("Wireframe preview placeholder");
+    }
     ImGui::Separator();
 
     ImVec2 canvasPos = ImGui::GetCursorScreenPos();
@@ -329,49 +725,407 @@ void drawViewport(const EditorLayout& layout, bool forceLayout) {
     ImGui::End();
 }
 
-void drawInspector(const EditorLayout& layout, bool forceLayout) {
+void drawReadOnlyInputText(const char* label, const std::string& value) {
+    std::vector<char> buffer(value.begin(), value.end());
+    buffer.push_back('\0');
+    ImGui::InputText(label, buffer.data(), buffer.size(), ImGuiInputTextFlags_ReadOnly);
+}
+
+void drawLabeledReadOnlyInputText(const char* label, const std::string& value, float labelWidth) {
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(label);
+    ImGui::SameLine();
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, labelWidth - ImGui::CalcTextSize(label).x));
+    ImGui::SameLine();
+
+    std::vector<char> buffer(value.begin(), value.end());
+    buffer.push_back('\0');
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+    std::string inputId = std::string("##") + label;
+    ImGui::InputText(inputId.c_str(), buffer.data(), buffer.size(), ImGuiInputTextFlags_ReadOnly);
+}
+
+std::string getScriptSourcePath(const std::string& typeName) {
+    return "src/game_scripts/" + typeName + ".cpp";
+}
+
+std::string toAbsoluteProjectPath(const std::string& relativePath) {
+    return std::string(NUT_PROJECT_ROOT) + "/" + relativePath;
+}
+
+bool projectFileExists(const std::string& relativePath) {
+    return FileExists(toAbsoluteProjectPath(relativePath).c_str());
+}
+
+TextEditor::Palette buildMotifSourcePalette() {
+    TextEditor::Palette palette = TextEditor::GetLightPalette();
+    palette[static_cast<size_t>(TextEditor::PaletteIndex::Background)] = motif::Panel;
+    palette[static_cast<size_t>(TextEditor::PaletteIndex::Default)] = IM_COL32(28, 28, 24, 255);
+    palette[static_cast<size_t>(TextEditor::PaletteIndex::Keyword)] = IM_COL32(32, 58, 122, 255);
+    palette[static_cast<size_t>(TextEditor::PaletteIndex::Number)] = IM_COL32(104, 42, 118, 255);
+    palette[static_cast<size_t>(TextEditor::PaletteIndex::String)] = IM_COL32(138, 66, 28, 255);
+    palette[static_cast<size_t>(TextEditor::PaletteIndex::CharLiteral)] = IM_COL32(138, 66, 28, 255);
+    palette[static_cast<size_t>(TextEditor::PaletteIndex::Preprocessor)] = IM_COL32(126, 88, 22, 255);
+    palette[static_cast<size_t>(TextEditor::PaletteIndex::Comment)] = IM_COL32(64, 102, 58, 255);
+    palette[static_cast<size_t>(TextEditor::PaletteIndex::MultiLineComment)] = IM_COL32(64, 102, 58, 255);
+    palette[static_cast<size_t>(TextEditor::PaletteIndex::LineNumber)] = IM_COL32(104, 104, 96, 255);
+    palette[static_cast<size_t>(TextEditor::PaletteIndex::CurrentLineFill)] = IM_COL32(172, 176, 168, 255);
+    palette[static_cast<size_t>(TextEditor::PaletteIndex::CurrentLineFillInactive)] = IM_COL32(180, 184, 174, 255);
+    palette[static_cast<size_t>(TextEditor::PaletteIndex::Selection)] = IM_COL32(88, 139, 145, 96);
+    palette[static_cast<size_t>(TextEditor::PaletteIndex::Cursor)] = motif::PanelDarkShadow;
+    return palette;
+}
+
+TextEditor& getSourceEditor(const std::string& sourcePath) {
+    auto it = g_sourceEditors.find(sourcePath);
+    if (it != g_sourceEditors.end()) {
+        return *it->second;
+    }
+
+    auto editor = std::make_unique<TextEditor>();
+    editor->SetLanguageDefinition(TextEditor::LanguageDefinition::CPlusPlus());
+    editor->SetPalette(buildMotifSourcePalette());
+    editor->SetShowWhitespaces(false);
+    editor->SetReadOnly(true);
+
+    std::string sourceText;
+    const std::string absolutePath = toAbsoluteProjectPath(sourcePath);
+    if (!readTextFile(absolutePath, sourceText)) {
+        sourceText = "// Could not read source file:\n// " + sourcePath;
+    }
+    editor->SetText(sourceText);
+
+    TextEditor& editorRef = *editor;
+    g_sourceEditors[sourcePath] = std::move(editor);
+    return editorRef;
+}
+
+void drawScriptPropertyRow(const char* label, const std::string& value, float labelWidth) {
+    const float lineStartX = ImGui::GetCursorPosX();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(label);
+    ImGui::SameLine(lineStartX + labelWidth);
+
+    std::vector<char> buffer(value.begin(), value.end());
+    buffer.push_back('\0');
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+    std::string inputId = std::string("##Prop") + label;
+    ImGui::InputText(inputId.c_str(), buffer.data(), buffer.size(), ImGuiInputTextFlags_ReadOnly);
+}
+
+void drawScriptCard(
+    EditorScriptData& script,
+    const std::string& sourcePath,
+    float labelWidth
+) {
+    const bool hasSource = projectFileExists(sourcePath);
+    const std::string sourceDisplay = hasSource ? sourcePath : "(not found)";
+    const std::string popupId = script.type + "##SourceModal";
+
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float lineHeight = ImGui::GetFrameHeightWithSpacing();
+    float propertyLabelWidth = 0.0f;
+    for (const auto& property : script.properties) {
+        propertyLabelWidth = std::max(propertyLabelWidth, ImGui::CalcTextSize(property.first.c_str()).x);
+    }
+    propertyLabelWidth += 16.0f;
+
+    float cardHeight = style.WindowPadding.y * 2.0f + ImGui::GetFrameHeight();
+    if (script.expanded) {
+        const float propertyRows = script.properties.empty() ? 1.0f : static_cast<float>(script.properties.size());
+        cardHeight += 8.0f;
+        cardHeight += lineHeight * (2.0f + propertyRows);
+    } else {
+        cardHeight += 4.0f;
+    }
+
+    ImGui::BeginChild(
+        (script.type + "##Card").c_str(),
+        ImVec2(0.0f, cardHeight),
+        true
+    );
+
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(script.type.c_str());
+    ImGui::SameLine();
+    const float buttonWidth = 18.0f;
+    const float buttonX = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - buttonWidth;
+    if (buttonX > ImGui::GetCursorPosX()) {
+        ImGui::SetCursorPosX(buttonX);
+    }
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.0f, 1.0f));
+    if (ImGui::SmallButton(script.expanded ? "-" : "+")) {
+        script.expanded = !script.expanded;
+    }
+    ImGui::PopStyleVar();
+
+    if (script.expanded) {
+        ImGui::Separator();
+        drawScriptSourceRow(sourceDisplay, popupId, hasSource, labelWidth);
+        if (hasSource) {
+            drawScriptSourceModal(script, sourcePath);
+        }
+
+        ImGui::Spacing();
+        ImGui::TextDisabled("Properties");
+        if (script.properties.empty()) {
+            ImGui::TextDisabled("No properties.");
+        } else {
+            for (const auto& property : script.properties) {
+                drawScriptPropertyRow(property.first.c_str(), property.second, propertyLabelWidth);
+            }
+        }
+    }
+
+    ImGui::EndChild();
+    drawSunkenPanelFrame();
+}
+
+void drawScriptSourceRow(
+    const std::string& sourceDisplay,
+    const std::string& popupId,
+    bool hasSource,
+    float labelWidth
+) {
+    const float lineStartX = ImGui::GetCursorPosX();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Source");
+    ImGui::SameLine(lineStartX + labelWidth);
+
+    const float buttonWidth = 48.0f;
+    const ImGuiStyle& style = ImGui::GetStyle();
+    float fieldWidth = ImGui::GetContentRegionAvail().x - buttonWidth - style.ItemSpacing.x;
+    if (fieldWidth < 80.0f) {
+        fieldWidth = 80.0f;
+    }
+
+    std::vector<char> buffer(sourceDisplay.begin(), sourceDisplay.end());
+    buffer.push_back('\0');
+    ImGui::SetNextItemWidth(fieldWidth);
+    ImGui::InputText("##Source", buffer.data(), buffer.size(), ImGuiInputTextFlags_ReadOnly);
+    ImGui::SameLine();
+
+    if (hasSource) {
+        if (ImGui::Button("View", ImVec2(buttonWidth, 0.0f))) {
+            ImGui::OpenPopup(popupId.c_str());
+        }
+    } else {
+        ImGui::BeginDisabled();
+        ImGui::Button("View", ImVec2(buttonWidth, 0.0f));
+        ImGui::EndDisabled();
+    }
+}
+
+void drawScriptSourcePreview(const std::string& sourcePath) {
+    TextEditor& editor = getSourceEditor(sourcePath);
+    editor.Render("##SourcePreviewEditor", ImVec2(-FLT_MIN, -FLT_MIN), false);
+}
+
+void drawScriptSourceModal(const EditorScriptData& script, const std::string& sourcePath) {
+    const std::string popupId = script.type + "##SourceModal";
+    ImGui::SetNextWindowSize(ImVec2(760.0f, 520.0f), ImGuiCond_Appearing);
+    bool keepOpen = true;
+    if (ImGui::BeginPopupModal(popupId.c_str(), &keepOpen)) {
+        ImGui::TextDisabled("%s", sourcePath.c_str());
+        ImGui::Spacing();
+        ImGui::BeginChild("SourceModalBody", ImVec2(0.0f, 0.0f), false);
+        drawScriptSourcePreview(sourcePath);
+        ImGui::EndChild();
+        if (!keepOpen) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
+void syncInspectorState(InspectorState& inspectorState, EditorObjectData* selectedObject) {
+    if (inspectorState.syncedObject == selectedObject) {
+        return;
+    }
+
+    inspectorState.syncedObject = selectedObject;
+    inspectorState.nameBuffer[0] = '\0';
+
+    if (!selectedObject) {
+        return;
+    }
+
+    const size_t maxLength = sizeof(inspectorState.nameBuffer) - 1;
+    const size_t copyLength = std::min(selectedObject->name.size(), maxLength);
+    selectedObject->name.copy(inspectorState.nameBuffer, copyLength);
+    inspectorState.nameBuffer[copyLength] = '\0';
+
+    for (int i = 0; i < 3; ++i) {
+        formatFloatToBuffer(selectedObject->position[i], inspectorState.positionBuffers[i], sizeof(inspectorState.positionBuffers[i]));
+        formatFloatToBuffer(selectedObject->rotation[i], inspectorState.rotationBuffers[i], sizeof(inspectorState.rotationBuffers[i]));
+        formatFloatToBuffer(selectedObject->scale[i], inspectorState.scaleBuffers[i], sizeof(inspectorState.scaleBuffers[i]));
+    }
+}
+
+void markSceneDirty(EditorSceneData& sceneData) {
+    if (!sceneData.dirty) {
+        sceneData.dirty = true;
+        appendConsoleLine(sceneData, "> Scene modified in memory. Save is not implemented yet.");
+    }
+}
+
+bool tryParseFloatBuffer(const char* buffer, float& outValue) {
+    char* end = nullptr;
+    const float parsedValue = std::strtof(buffer, &end);
+    if (end == buffer) {
+        return false;
+    }
+
+    while (*end != '\0') {
+        if (!std::isspace(static_cast<unsigned char>(*end))) {
+            return false;
+        }
+        ++end;
+    }
+
+    outValue = parsedValue;
+    return true;
+}
+
+bool drawVec3TextFields(const char* label, float values[3], char buffers[3][32]) {
+    bool changed = false;
+    ImGui::PushID(label);
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float lineStartX = ImGui::GetCursorPosX();
+    const float totalWidth = ImGui::GetContentRegionAvail().x;
+    const float labelWidth = 72.0f;
+    const float slotGap = style.ItemSpacing.x;
+    const float axisGap = style.ItemInnerSpacing.x;
+    const float axisLabelWidth = ImGui::CalcTextSize("X").x;
+    const float slotsWidth = std::max(120.0f, totalWidth - labelWidth - style.ItemSpacing.x);
+    const float slotWidth = std::max(36.0f, (slotsWidth - slotGap * 2.0f) / 3.0f);
+    const float fieldWidth = std::max(24.0f, slotWidth - axisLabelWidth - axisGap - 8.0f);
+
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(label);
+    ImGui::SameLine(lineStartX + labelWidth);
+
+    const char* axisLabels[3] = {"X", "Y", "Z"};
+    for (int i = 0; i < 3; ++i) {
+        if (i > 0) {
+            ImGui::SameLine(0.0f, slotGap);
+        }
+
+        ImGui::BeginGroup();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(axisLabels[i]);
+        ImGui::SameLine(0.0f, axisGap);
+        ImGui::SetNextItemWidth(fieldWidth);
+        std::string inputId = std::string("##") + axisLabels[i];
+        if (ImGui::InputText(inputId.c_str(), buffers[i], sizeof(buffers[i]), ImGuiInputTextFlags_EnterReturnsTrue)) {
+            float parsedValue = values[i];
+            if (tryParseFloatBuffer(buffers[i], parsedValue) && parsedValue != values[i]) {
+                values[i] = parsedValue;
+                changed = true;
+            }
+            formatFloatToBuffer(values[i], buffers[i], sizeof(buffers[i]));
+        }
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            float parsedValue = values[i];
+            if (tryParseFloatBuffer(buffers[i], parsedValue) && parsedValue != values[i]) {
+                values[i] = parsedValue;
+                changed = true;
+            }
+            formatFloatToBuffer(values[i], buffers[i], sizeof(buffers[i]));
+        }
+        ImGui::EndGroup();
+    }
+
+    ImGui::PopID();
+    return changed;
+}
+
+void drawInspector(const EditorLayout& layout, bool forceLayout, EditorSceneData& sceneData, InspectorState& inspectorState) {
     applyPanelLayout(layout.inspectorPos, layout.inspectorSize, forceLayout);
 
-    static char name[64] = "OrbitPivot";
-    static char mesh[128] = "(empty)";
-    static float position[3] = {0.0f, 0.0f, 0.0f};
-    static float rotation[3] = {0.0f, 0.0f, 0.0f};
-    static float scale[3] = {1.0f, 1.0f, 1.0f};
-
     ImGui::Begin("Inspector");
-    ImGui::TextDisabled("Selected GameObject");
-    ImGui::Separator();
+
+    if (!sceneData.selectedObject) {
+        ImGui::TextDisabled("Nothing selected.");
+        ImGui::End();
+        return;
+    }
+
+    syncInspectorState(inspectorState, sceneData.selectedObject);
+    EditorObjectData& object = *sceneData.selectedObject;
+    const float inspectorLabelWidth = 72.0f;
+
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Name");
+    ImGui::SameLine();
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, inspectorLabelWidth - ImGui::CalcTextSize("Name").x));
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+    if (ImGui::InputText("##Name", inspectorState.nameBuffer, sizeof(inspectorState.nameBuffer))) {
+        object.name = inspectorState.nameBuffer;
+        markSceneDirty(sceneData);
+    }
+
+    std::string meshLabel = object.meshPath.empty() ? "(empty)" : object.meshPath;
     ImGui::BeginDisabled();
-    ImGui::InputText("Name", name, sizeof(name), ImGuiInputTextFlags_ReadOnly);
-    ImGui::DragFloat3("Position", position, 0.01f, 0.0f, 0.0f, "%.2f");
-    ImGui::DragFloat3("Rotation", rotation, 0.01f, 0.0f, 0.0f, "%.2f");
-    ImGui::DragFloat3("Scale", scale, 0.01f, 0.0f, 0.0f, "%.2f");
-    ImGui::InputText("Mesh", mesh, sizeof(mesh), ImGuiInputTextFlags_ReadOnly);
+    drawLabeledReadOnlyInputText("Mesh", meshLabel, inspectorLabelWidth);
     ImGui::EndDisabled();
+
+    if (drawVec3TextFields("Position", object.position, inspectorState.positionBuffers)) {
+        markSceneDirty(sceneData);
+    }
+    if (drawVec3TextFields("Rotation", object.rotation, inspectorState.rotationBuffers)) {
+        markSceneDirty(sceneData);
+    }
+    if (drawVec3TextFields("Scale", object.scale, inspectorState.scaleBuffers)) {
+        markSceneDirty(sceneData);
+    }
 
     ImGui::Spacing();
     ImGui::SeparatorText("Scripts");
-    ImGui::TextUnformatted("SpinScript");
-    ImGui::TextDisabled("rotationSpeed: [0.6, 1.2, 0]");
+    if (object.scripts.empty()) {
+        ImGui::TextDisabled("No scripts attached.");
+    } else {
+        for (size_t i = 0; i < object.scripts.size(); ++i) {
+            EditorScriptData& script = object.scripts[i];
+            const std::string sourcePath = getScriptSourcePath(script.type);
+            ImGui::PushID(static_cast<int>(i));
+            drawScriptCard(script, sourcePath, inspectorLabelWidth);
+            if (i + 1 < object.scripts.size()) {
+                ImGui::Spacing();
+            }
+            ImGui::PopID();
+        }
+    }
+
+    if (sceneData.dirty) {
+        ImGui::Spacing();
+        ImGui::TextDisabled("Local changes pending. Save is not implemented yet.");
+    }
+
     ImGui::End();
 }
 
-void drawAssetsConsole(const EditorLayout& layout, bool forceLayout) {
+void drawAssetsConsole(const EditorLayout& layout, bool forceLayout, const EditorSceneData& sceneData) {
     applyPanelLayout(layout.assetsPos, layout.assetsSize, forceLayout);
 
     ImGui::Begin("Assets / Console");
     if (ImGui::BeginTabBar("AssetsConsoleTabs")) {
         if (ImGui::BeginTabItem("Assets")) {
-            ImGui::BulletText("models/cube.obj");
-            ImGui::BulletText("models/sphere.obj");
-            ImGui::BulletText("scenes/demo.nutscene");
+            if (sceneData.assetPaths.empty()) {
+                ImGui::TextDisabled("No assets referenced.");
+            } else {
+                for (const std::string& assetPath : sceneData.assetPaths) {
+                    ImGui::BulletText("%s", assetPath.c_str());
+                }
+            }
             ImGui::EndTabItem();
         }
 
         if (ImGui::BeginTabItem("Console")) {
-            ImGui::TextUnformatted("> Loaded scene: assets/scenes/demo.nutscene");
-            ImGui::TextUnformatted("> Registered script: SpinScript");
-            ImGui::TextUnformatted("> UI containers only; editing is not wired yet.");
+            for (const std::string& line : sceneData.consoleLines) {
+                ImGui::TextUnformatted(line.c_str());
+            }
             ImGui::EndTabItem();
         }
 
@@ -393,9 +1147,16 @@ int main() {
     static const std::string editorIniPath = std::string(NUT_PROJECT_ROOT) + "/scene_editor/nutscene_editor.ini";
     const bool hasSavedLayout = FileExists(editorIniPath.c_str());
 
-    // ImGui stores window positions and sizes in an .ini file.
-    // Use a project-specific file so the scene editor keeps its own layout.
     io.IniFilename = editorIniPath.c_str();
+    ImGuiSettingsHandler scriptExpansionHandler;
+    scriptExpansionHandler.TypeName = "NutSceneEditor";
+    scriptExpansionHandler.TypeHash = ImHashStr("NutSceneEditor");
+    scriptExpansionHandler.ReadOpenFn = scriptExpansionSettingsReadOpen;
+    scriptExpansionHandler.ReadLineFn = scriptExpansionSettingsReadLine;
+    scriptExpansionHandler.WriteAllFn = scriptExpansionSettingsWriteAll;
+    ImGui::GetCurrentContext()->SettingsHandlers.push_back(scriptExpansionHandler);
+    ImGui::LoadIniSettingsFromDisk(editorIniPath.c_str());
+
     const std::string editorFontPath = std::string(NUT_PROJECT_ROOT) + "/scene_editor/assets/fonts/ProggyClean.ttf";
     if (FileExists(editorFontPath.c_str())) {
         io.Fonts->AddFontFromFileTTF(editorFontPath.c_str(), 16.0f);
@@ -406,6 +1167,13 @@ int main() {
     rlImGuiEndInitImGui();
 
     bool forceLayout = !hasSavedLayout;
+    EditorSceneData sceneData;
+    InspectorState inspectorState;
+    const std::string scenePath = "assets/scenes/demo.nutscene";
+    const std::string scenePathOnDisk = std::string(NUT_PROJECT_ROOT) + "/" + scenePath;
+    loadSceneData(sceneData, scenePathOnDisk, scenePath);
+    applyScriptExpansionStates(sceneData.roots, g_scriptExpansionStates);
+    g_scriptExpansionSceneData = &sceneData;
 
     while (!WindowShouldClose()) {
         if (IsKeyPressed(KEY_F11)) {
@@ -419,22 +1187,23 @@ int main() {
         rlImGuiBegin();
         drawDesktopPattern();
         float menuHeight = ImGui::GetFrameHeight();
-        if (drawMainMenu()) {
+        if (drawMainMenu(sceneData)) {
             forceLayout = true;
         }
 
-        float contentTop = drawToolbar(menuHeight);
+        float contentTop = drawToolbar(menuHeight, sceneData);
         EditorLayout layout = calculateResponsiveLayout(contentTop);
-        drawHierarchy(layout, forceLayout);
-        drawViewport(layout, forceLayout);
-        drawInspector(layout, forceLayout);
-        drawAssetsConsole(layout, forceLayout);
+        drawHierarchy(layout, forceLayout, sceneData);
+        drawViewport(layout, forceLayout, sceneData);
+        drawInspector(layout, forceLayout, sceneData, inspectorState);
+        drawAssetsConsole(layout, forceLayout, sceneData);
         forceLayout = false;
         rlImGuiEnd();
 
         EndDrawing();
     }
 
+    ImGui::SaveIniSettingsToDisk(editorIniPath.c_str());
     rlImGuiShutdown();
     CloseWindow();
     return 0;
