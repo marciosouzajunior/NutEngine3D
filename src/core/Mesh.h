@@ -1,7 +1,12 @@
 #pragma once
 
 #include "../math/Vec3.h"
+#ifdef ARDUINO
+#include "FixedVector.h"
+#include "NanoRuntimeConfig.h"
+#else
 #include <vector>
+#endif
 
 namespace nut {
 
@@ -9,6 +14,7 @@ namespace nut {
 struct Edge {
     int a;
     int b;
+    Edge() : a(0), b(0) {}
     Edge(int a, int b) : a(a), b(b) {}
 };
 
@@ -25,8 +31,13 @@ struct Edge {
 // asset format such as OBJ using ObjLoader.
 class Mesh {
 public:
+#ifdef ARDUINO
+    FixedVector<math::Vec3, NUT_MAX_VERTICES_PER_MESH> vertices;
+    FixedVector<Edge, NUT_MAX_EDGES_PER_MESH> edges;
+#else
     std::vector<math::Vec3> vertices;
     std::vector<Edge> edges;
+#endif
 
     // Factory method to create a simple wireframe cube
     static Mesh createCube() {
@@ -43,22 +54,22 @@ public:
         mesh.vertices.push_back(math::Vec3(-1,  1,  1)); // 7
 
         // Front face edges
-        mesh.edges.emplace_back(0, 1);
-        mesh.edges.emplace_back(1, 2);
-        mesh.edges.emplace_back(2, 3);
-        mesh.edges.emplace_back(3, 0);
+        mesh.edges.push_back(Edge(0, 1));
+        mesh.edges.push_back(Edge(1, 2));
+        mesh.edges.push_back(Edge(2, 3));
+        mesh.edges.push_back(Edge(3, 0));
 
         // Back face edges
-        mesh.edges.emplace_back(4, 5);
-        mesh.edges.emplace_back(5, 6);
-        mesh.edges.emplace_back(6, 7);
-        mesh.edges.emplace_back(7, 4);
+        mesh.edges.push_back(Edge(4, 5));
+        mesh.edges.push_back(Edge(5, 6));
+        mesh.edges.push_back(Edge(6, 7));
+        mesh.edges.push_back(Edge(7, 4));
 
         // Connecting edges
-        mesh.edges.emplace_back(0, 4);
-        mesh.edges.emplace_back(1, 5);
-        mesh.edges.emplace_back(2, 6);
-        mesh.edges.emplace_back(3, 7);
+        mesh.edges.push_back(Edge(0, 4));
+        mesh.edges.push_back(Edge(1, 5));
+        mesh.edges.push_back(Edge(2, 6));
+        mesh.edges.push_back(Edge(3, 7));
 
         return mesh;
     }

@@ -1,0 +1,6 @@
+#include "../../../src/scene/RuntimeScene.cpp"
+#include "../../../src/scene/SceneBinaryLoader.cpp"
+#include "../../../src/core/Scene.cpp"
+#include "../../../src/core/Script.cpp"
+#include "../../../assets/scripts/SpinScript.cpp"
+#include "../../../assets/scripts/DummyScript.cpp"

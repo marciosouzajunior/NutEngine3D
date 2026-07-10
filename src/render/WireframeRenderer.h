@@ -2,17 +2,34 @@
 
 #include "Graphics.h"
 #include "../core/Scene.h"
+#ifdef ARDUINO
+#include "../core/NanoRuntimeConfig.h"
+#endif
 #include "../math/Vec2.h"
 
 namespace nut {
 
-// WireframeRenderer takes a Scene, computes the camera/object matrices,
-// and draws the 3D objects onto a 2D Graphics interface.
+// WireframeRenderer is the generic desktop/native wireframe pipeline.
+//
+// Pipeline role:
+// 1. Read the active Scene and its Camera.
+// 2. Build the view-projection matrix for the current frame.
+// 3. Walk through the scene graph and build an MVP matrix per object.
+// 4. Project each 3D mesh vertex to 2D screen coordinates.
+// 5. Draw the mesh edges through Graphics.
+//
+// It is a straightforward reference pipeline: easy to reason about, but not as
+// aggressively specialized as the Nano renderer.
 class WireframeRenderer {
 private:
     Graphics* m_graphics;
 
-    // Recursively renders an object and its children
+    // Render one object subtree.
+    //
+    // This stage still works in 3D object space:
+    // - each object computes its world matrix
+    // - that world matrix is combined with the scene's camera matrices
+    // - the resulting MVP matrix is then passed to the mesh stage
     void renderObject(GameObject* obj, const math::Mat4& viewProjMatrix) {
         if (!obj) return;
 
@@ -35,11 +52,26 @@ private:
         }
     }
 
-    // Projects the mesh vertices to 2D and draws the lines
+    // Convert one mesh from 3D local vertices to 2D screen-space lines.
+    //
+    // This is the stage where the final image really starts to appear:
+    // - the mesh vertices are transformed by the MVP matrix
+    // - valid vertices are projected to screen coordinates
+    // - edges reuse those cached 2D points and emit drawLine() calls
     void drawMesh(Mesh* mesh, const math::Mat4& mvpMatrix) {
-        // We will cache the transformed 2D points to avoid re-projecting the same vertex multiple times
+        // First we project each 3D vertex to screen space and store the 2D result.
+        // Then the edge pass reuses those cached points instead of projecting the
+        // same vertex again for every connected edge.
+#ifdef ARDUINO
+        math::Vec2 screenPoints[NUT_MAX_VERTICES_PER_MESH];
+        bool pointValid[NUT_MAX_VERTICES_PER_MESH] = {};
+        if (mesh->vertices.size() > NUT_MAX_VERTICES_PER_MESH) {
+            return;
+        }
+#else
         std::vector<math::Vec2> screenPoints(mesh->vertices.size());
         std::vector<bool> pointValid(mesh->vertices.size(), false);
+#endif
 
         int halfWidth = m_graphics->width() / 2;
         int halfHeight = m_graphics->height() / 2;
@@ -82,7 +114,10 @@ private:
 public:
     WireframeRenderer(Graphics* graphics) : m_graphics(graphics) {}
 
-    // Renders the entire scene from the perspective of its camera.
+    // Entry point for one complete frame on the generic/native pipeline.
+    //
+    // By the time this function returns, all visible wireframe edges for the
+    // scene have been converted into 2D drawLine() calls on the Graphics backend.
     void render(Scene& scene) {
         if (!m_graphics) return;
 

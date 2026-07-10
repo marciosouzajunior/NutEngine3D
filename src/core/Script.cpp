@@ -34,6 +34,7 @@ const Scene* Script::scene() const {
     return m_gameObject->scene();
 }
 
+#ifndef ARDUINO
 GameObject* Script::findObject(const std::string& objectName) {
     if (!scene()) {
         return nullptr;
@@ -55,5 +56,6 @@ void Script::requestSceneChange(const std::string& sceneName) {
         m_gameObject->scene()->requestSceneChange(sceneName);
     }
 }
+#endif
 
 } // namespace nut

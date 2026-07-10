@@ -1,5 +1,7 @@
 #include "Scene.h"
+#ifndef ARDUINO
 #include "SceneManager.h"
+#endif
 
 namespace nut {
 
@@ -9,6 +11,7 @@ void Scene::setSceneManager(SceneManager* sceneManager) {
     m_sceneManager = sceneManager;
 }
 
+#ifndef ARDUINO
 void Scene::requestSceneChange(const std::string& sceneName) {
     if (m_sceneManager) {
         m_sceneManager->changeScene(sceneName);
@@ -74,5 +77,6 @@ const GameObject* Scene::findObjectInTree(const GameObject* obj, const std::stri
 
     return nullptr;
 }
+#endif
 
 } // namespace nut

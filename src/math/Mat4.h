@@ -2,10 +2,25 @@
 
 #include "Vec3.h"
 #include "MathUtils.h"
+
+#ifdef ARDUINO
+#include <math.h>
+#else
 #include <cmath>
+#endif
 
 namespace nut {
 namespace math {
+
+#ifdef ARDUINO
+inline float nutCos(float value) { return cos(value); }
+inline float nutSin(float value) { return sin(value); }
+inline float nutTan(float value) { return tan(value); }
+#else
+inline float nutCos(float value) { return std::cos(value); }
+inline float nutSin(float value) { return std::sin(value); }
+inline float nutTan(float value) { return std::tan(value); }
+#endif
 
 // A 4x4 Matrix class. 
 // In 3D graphics, 4x4 matrices are used to combine translation, rotation, and scaling
@@ -85,8 +100,8 @@ struct Mat4 {
     // Static helpers to create Rotation matrices (in radians)
     static Mat4 makeRotationX(float rad) {
         Mat4 result;
-        float c = std::cos(rad);
-        float s = std::sin(rad);
+        float c = nutCos(rad);
+        float s = nutSin(rad);
         result.m[1][1] = c;
         result.m[1][2] = -s;
         result.m[2][1] = s;
@@ -96,8 +111,8 @@ struct Mat4 {
 
     static Mat4 makeRotationY(float rad) {
         Mat4 result;
-        float c = std::cos(rad);
-        float s = std::sin(rad);
+        float c = nutCos(rad);
+        float s = nutSin(rad);
         result.m[0][0] = c;
         result.m[0][2] = s;
         result.m[2][0] = -s;
@@ -107,8 +122,8 @@ struct Mat4 {
 
     static Mat4 makeRotationZ(float rad) {
         Mat4 result;
-        float c = std::cos(rad);
-        float s = std::sin(rad);
+        float c = nutCos(rad);
+        float s = nutSin(rad);
         result.m[0][0] = c;
         result.m[0][1] = -s;
         result.m[1][0] = s;
@@ -125,7 +140,7 @@ struct Mat4 {
         // Start with all zeros
         for(int r=0; r<4; ++r) for(int c=0; c<4; ++c) result.m[r][c] = 0.0f;
 
-        float tanHalfFov = std::tan(fovY / 2.0f);
+        float tanHalfFov = nutTan(fovY / 2.0f);
         float zRange = zNear - zFar;
 
         result.m[0][0] = 1.0f / (aspect * tanHalfFov);

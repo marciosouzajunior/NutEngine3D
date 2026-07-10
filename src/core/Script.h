@@ -1,6 +1,8 @@
 #pragma once
 
+#ifndef ARDUINO
 #include <string>
+#endif
 
 namespace nut {
 
@@ -49,12 +51,14 @@ public:
 
     // Finds another object in the same scene by name.
     // Example: GameObject* door = findObject("Door");
+#ifndef ARDUINO
     GameObject* findObject(const std::string& objectName);
     const GameObject* findObject(const std::string& objectName) const;
 
     // Scripts can request scene changes through their owning GameObject/Scene.
     // The SceneManager applies the change after the current update finishes.
     void requestSceneChange(const std::string& sceneName);
+#endif
 };
 
 } // namespace nut

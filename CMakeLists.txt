@@ -8,6 +8,7 @@ if(POLICY CMP0135)
 endif()
 
 set(CMAKE_CXX_STANDARD 17)
+option(NUT_BUILD_SCENE_EDITOR "Build the NutSceneEditor desktop tool" OFF)
 
 # Fetch Raylib
 include(FetchContent)
@@ -19,64 +20,71 @@ set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(raylib)
 
-# Dear ImGui + rlImGui for the scene editor UI
-FetchContent_Declare(
-    imgui
-    URL https://github.com/ocornut/imgui/archive/refs/heads/master.zip
+# Shared runtime code used by the desktop simulator and other native tools.
+add_library(NutEngineRuntime STATIC
+    src/core/ObjLoader.cpp
+    src/core/Scene.cpp
+    src/core/SceneManager.cpp
+    src/core/Script.cpp
+    assets/scripts/DummyScript.cpp
+    assets/scripts/SpinScript.cpp
+    src/scene/RuntimeScene.cpp
+    src/scene/SceneBinaryLoader.cpp
 )
-FetchContent_Declare(
-    rlimgui
-    URL https://github.com/raylib-extras/rlImGui/archive/refs/heads/main.zip
+target_include_directories(NutEngineRuntime PUBLIC src assets ${CMAKE_SOURCE_DIR})
+
+# Desktop simulator target
+add_executable(NutEngine3D
+    targets/desktop/main.cpp
 )
-FetchContent_Declare(
-    imgui_color_text_edit
-    URL https://github.com/BalazsJako/ImGuiColorTextEdit/archive/refs/heads/master.zip
-)
-FetchContent_MakeAvailable(imgui rlimgui)
-FetchContent_GetProperties(imgui_color_text_edit)
-if(NOT imgui_color_text_edit_POPULATED)
-    FetchContent_Populate(imgui_color_text_edit)
+
+target_include_directories(NutEngine3D PRIVATE targets/desktop)
+target_link_libraries(NutEngine3D PRIVATE NutEngineRuntime raylib)
+
+if(NUT_BUILD_SCENE_EDITOR)
+    # Dear ImGui + rlImGui are only needed for the scene editor UI.
+    FetchContent_Declare(
+        imgui
+        URL https://github.com/ocornut/imgui/archive/refs/heads/master.zip
+    )
+    FetchContent_Declare(
+        rlimgui
+        URL https://github.com/raylib-extras/rlImGui/archive/refs/heads/main.zip
+    )
+    FetchContent_Declare(
+        imgui_color_text_edit
+        URL https://github.com/BalazsJako/ImGuiColorTextEdit/archive/refs/heads/master.zip
+    )
+    FetchContent_MakeAvailable(imgui rlimgui imgui_color_text_edit)
+
+    add_library(imgui STATIC
+        ${imgui_SOURCE_DIR}/imgui.cpp
+        ${imgui_SOURCE_DIR}/imgui_draw.cpp
+        ${imgui_SOURCE_DIR}/imgui_tables.cpp
+        ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+    )
+    target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR})
+
+    add_library(rlimgui STATIC
+        ${rlimgui_SOURCE_DIR}/rlImGui.cpp
+    )
+    target_include_directories(rlimgui PUBLIC ${rlimgui_SOURCE_DIR})
+    target_link_libraries(rlimgui PUBLIC imgui raylib)
+
+    add_library(imgui_color_text_edit STATIC
+        ${imgui_color_text_edit_SOURCE_DIR}/TextEditor.cpp
+    )
+    target_include_directories(imgui_color_text_edit PUBLIC
+        ${imgui_color_text_edit_SOURCE_DIR}
+        ${imgui_SOURCE_DIR}
+    )
+    target_link_libraries(imgui_color_text_edit PUBLIC imgui)
+
+    add_executable(NutSceneEditor
+        tools/scene_editor/main.cpp
+        src/scene/Json.cpp
+    )
+    target_include_directories(NutSceneEditor PRIVATE src ${CMAKE_SOURCE_DIR})
+    target_link_libraries(NutSceneEditor PRIVATE raylib imgui rlimgui imgui_color_text_edit)
+    target_compile_definitions(NutSceneEditor PRIVATE NUT_PROJECT_ROOT="${CMAKE_SOURCE_DIR}")
 endif()
-
-add_library(imgui STATIC
-    ${imgui_SOURCE_DIR}/imgui.cpp
-    ${imgui_SOURCE_DIR}/imgui_draw.cpp
-    ${imgui_SOURCE_DIR}/imgui_tables.cpp
-    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
-)
-target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR})
-
-add_library(rlimgui STATIC
-    ${rlimgui_SOURCE_DIR}/rlImGui.cpp
-)
-target_include_directories(rlimgui PUBLIC ${rlimgui_SOURCE_DIR})
-target_link_libraries(rlimgui PUBLIC imgui raylib)
-
-add_library(imgui_color_text_edit STATIC
-    ${imgui_color_text_edit_SOURCE_DIR}/TextEditor.cpp
-)
-target_include_directories(imgui_color_text_edit PUBLIC
-    ${imgui_color_text_edit_SOURCE_DIR}
-    ${imgui_SOURCE_DIR}
-)
-target_link_libraries(imgui_color_text_edit PUBLIC imgui)
-
-# Source files
-# CONFIGURE_DEPENDS asks CMake to refresh this list when new source files are added.
-file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS "src/*.cpp" "src/*.h")
-
-# Create executable
-add_executable(NutEngine3D ${SOURCES})
-
-# Link Raylib
-target_link_libraries(NutEngine3D PRIVATE raylib)
-target_include_directories(NutEngine3D PRIVATE src)
-
-# Scene editor prototype
-add_executable(NutSceneEditor
-    scene_editor/main.cpp
-    src/scene/Json.cpp
-)
-target_link_libraries(NutSceneEditor PRIVATE raylib imgui rlimgui)
-target_link_libraries(NutSceneEditor PRIVATE imgui_color_text_edit)
-target_compile_definitions(NutSceneEditor PRIVATE NUT_PROJECT_ROOT="${CMAKE_SOURCE_DIR}")

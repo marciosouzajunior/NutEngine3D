@@ -2,8 +2,17 @@
 
 namespace nut {
 
-// Abstract interface for 2D drawing.
-// This isolates the 3D engine from the actual rendering library (Raylib, TFT_eSPI, etc).
+// Graphics is the narrow "draw lines on a 2D surface" contract used by the engine.
+//
+// Pipeline role:
+// - Renderers finish their 3D math and reduce everything to 2D line segments.
+// - They call this interface to clear a frame, draw those lines, and present it.
+// - Concrete backends decide what "present" means:
+//   - desktop: show the rendered image in a window
+//   - Nano: flush the current OLED page over I2C
+//
+// In other words, this layer is already after projection. It does not know about
+// meshes, cameras, or scenes; it only knows about 2D drawing commands.
 class Graphics {
 public:
     // Because this class has virtual methods, the destructor should also be virtual.

@@ -2,7 +2,8 @@
   "name": "Demo",
   "camera": {
     "position": [0, 0, -8],
-    "rotation": [0, 0, 0]
+    "rotation": [0, 0, 0],
+    "fov": 60
   },
   "objects": [
     {
@@ -13,7 +14,7 @@
       "scripts": [
         {
           "type": "SpinScript",
-          "rotationSpeed": [0.6, 1.2, 0]
+          "rotationSpeed": [0.75, 1.50, 0]
         },
         {
           "type": "DummyScript",
@@ -27,18 +28,18 @@
           "mesh": "assets/models/cube.obj",
           "position": [0, 0, 0],
           "rotation": [0, 0, 0],
-          "scale": [0.08, 0.08, 0.08]
+          "scale": [0.20, 0.20, 0.20]
         },
         {
           "name": "OrbitingSphere",
           "mesh": "assets/models/sphere.obj",
-          "position": [2.4, 0, 0],
+          "position": [4.0, 0, 0],
           "rotation": [0, 0, 0],
-          "scale": [0.08, 0.08, 0.08],
+          "scale": [0.12, 0.12, 0.12],
           "scripts": [
             {
               "type": "SpinScript",
-              "rotationSpeed": [-2.0, 1.0, 2.5]
+              "rotationSpeed": [0.35, 0.15, 0.60]
             }
           ]
         }

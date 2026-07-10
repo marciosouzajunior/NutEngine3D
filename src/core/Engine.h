@@ -7,7 +7,16 @@
 
 namespace nut {
 
-// Engine owns the main loop and drives the active scene.
+// Engine owns the main loop for the generic/native runtime.
+//
+// Pipeline role:
+// 1. ask the platform backend whether the app should keep running
+// 2. advance scene simulation for the current frame
+// 3. tell the renderer to convert the active scene into 2D draw commands
+// 4. ask the Graphics backend to present the finished frame
+//
+// On Nano the loop is handwritten in targets/nano/main.cpp because that target
+// uses page-based presentation, but the high-level responsibilities are the same.
 class Engine {
 private:
     // Raw pointers are used here because the engine does not own these objects.

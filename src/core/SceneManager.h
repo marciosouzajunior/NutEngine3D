@@ -2,7 +2,7 @@
 
 #include "Scene.h"
 #include <string>
-#include <unordered_map>
+#include <map>
 
 namespace nut {
 
@@ -10,7 +10,7 @@ namespace nut {
 // Game code decides when to change scenes; the manager performs the lifecycle calls.
 class SceneManager {
 private:
-    std::unordered_map<std::string, Scene*> m_scenes;
+    std::map<std::string, Scene*> m_scenes;
     Scene* m_activeScene;
     Scene* m_pendingScene;
 

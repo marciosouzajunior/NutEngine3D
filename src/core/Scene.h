@@ -2,8 +2,13 @@
 
 #include "Camera.h"
 #include "GameObject.h"
+#ifdef ARDUINO
+#include "FixedVector.h"
+#include "NanoRuntimeConfig.h"
+#else
 #include <string>
 #include <vector>
+#endif
 
 namespace nut {
 
@@ -15,7 +20,11 @@ class Scene {
 protected:
     // Protected means child classes can use these members, but outside code cannot.
     // A custom scene should add root objects here and position this camera.
+#ifdef ARDUINO
+    FixedVector<GameObject*, NUT_MAX_ROOT_OBJECTS> m_rootObjects;
+#else
     std::vector<GameObject*> m_rootObjects;
+#endif
     Camera m_camera;
     SceneManager* m_sceneManager;
 
@@ -42,12 +51,14 @@ public:
 
     // Scenes use this to ask the engine to switch to another registered scene.
     // The actual change happens after the current update finishes.
+#ifndef ARDUINO
     void requestSceneChange(const std::string& sceneName);
 
     // Finds a GameObject by name anywhere in this scene.
     // The search starts at root objects and walks through children recursively.
     GameObject* findObject(const std::string& objectName);
     const GameObject* findObject(const std::string& objectName) const;
+#endif
 
     // Adds a root object to the scene.
     // Children do not need to be added here because the renderer walks them recursively.
@@ -93,6 +104,15 @@ public:
     }
 
     // The renderer starts from these root objects and traverses the scene graph.
+#ifdef ARDUINO
+    FixedVector<GameObject*, NUT_MAX_ROOT_OBJECTS>& rootObjects() {
+        return m_rootObjects;
+    }
+
+    const FixedVector<GameObject*, NUT_MAX_ROOT_OBJECTS>& rootObjects() const {
+        return m_rootObjects;
+    }
+#else
     std::vector<GameObject*>& rootObjects() {
         return m_rootObjects;
     }
@@ -100,14 +120,17 @@ public:
     const std::vector<GameObject*>& rootObjects() const {
         return m_rootObjects;
     }
+#endif
 
     const Camera& camera() const {
         return m_camera;
     }
 
 private:
+#ifndef ARDUINO
     GameObject* findObjectInTree(GameObject* obj, const std::string& objectName);
     const GameObject* findObjectInTree(const GameObject* obj, const std::string& objectName) const;
+#endif
 };
 
 } // namespace nut

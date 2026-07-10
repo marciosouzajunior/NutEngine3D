@@ -19,6 +19,14 @@ public:
         transform.position = math::Vec3(0, 0, -5); 
     }
 
+    void setFovDegrees(float degrees) {
+        fov = math::degToRad(degrees);
+    }
+
+    float getFovDegrees() const {
+        return math::radToDeg(fov);
+    }
+
     // Calculates the View Matrix.
     // The View Matrix moves the entire world in the opposite direction of the camera.
     // E.g., if the camera moves +5 in Z, the world moves -5 in Z.

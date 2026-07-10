@@ -43,7 +43,7 @@ void addUniqueEdge(Mesh& mesh, std::unordered_set<long long>& edgeKeys, int a, i
 
     long long key = makeEdgeKey(a, b);
     if (edgeKeys.insert(key).second) {
-        mesh.edges.emplace_back(a, b);
+        mesh.edges.push_back(Edge(a, b));
     }
 }
 
@@ -70,7 +70,7 @@ bool ObjLoader::load(const std::string& path, Mesh& outMesh) {
             float z = 0.0f;
 
             if (stream >> x >> y >> z) {
-                mesh.vertices.emplace_back(x, y, z);
+                mesh.vertices.push_back(math::Vec3(x, y, z));
             }
         } else if (type == "f") {
             std::vector<int> faceIndices;

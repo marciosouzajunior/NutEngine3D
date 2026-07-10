@@ -3,8 +3,15 @@
 #include "Mesh.h"
 #include "Script.h"
 #include "Transform.h"
+#include <stdint.h>
+#ifdef ARDUINO
+#include <Arduino.h>
+#include "FixedVector.h"
+#include "NanoRuntimeConfig.h"
+#else
 #include <string>
 #include <vector>
+#endif
 
 namespace nut {
 
@@ -19,9 +26,15 @@ class Scene;
 // - GameObject = Mesh + Transform + Scripts.
 class GameObject {
 private:
+#ifdef ARDUINO
+    const char* m_name;
+    FixedVector<Script*, NUT_MAX_SCRIPTS_PER_OBJECT> m_scripts;
+    int16_t m_meshIndex;
+#else
     std::string m_name;
-    Scene* m_scene;
     std::vector<Script*> m_scripts;
+#endif
+    Scene* m_scene;
 
 public:
     // Transform tells the engine where/how this object appears in the scene.
@@ -34,11 +47,47 @@ public:
     // places because each GameObject has its own Transform.
     Mesh* mesh; // Pointer to allow sharing the same mesh across multiple objects.
 
+#ifdef ARDUINO
+    FixedVector<GameObject*, NUT_MAX_CHILDREN_PER_OBJECT> children;
+
+    explicit GameObject(const char* name = "GameObject")
+        : m_name(name)
+        , m_scripts()
+        , m_meshIndex(-1)
+        , m_scene(nullptr)
+        , transform()
+        , mesh(nullptr)
+        , children()
+#else
     std::vector<GameObject*> children;
 
     explicit GameObject(const std::string& name = "GameObject")
-        : m_name(name), m_scene(nullptr), mesh(nullptr) {}
+        : m_name(name)
+        , m_scripts()
+        , m_scene(nullptr)
+        , transform()
+        , mesh(nullptr)
+        , children()
+#endif
+    {}
 
+#ifdef ARDUINO
+    const char* name() const {
+        return m_name ? m_name : "";
+    }
+
+    void setName(const char* name) {
+        m_name = name;
+    }
+
+    int16_t meshIndex() const {
+        return m_meshIndex;
+    }
+
+    void setMeshIndex(int16_t meshIndex) {
+        m_meshIndex = meshIndex;
+    }
+#else
     const std::string& name() const {
         return m_name;
     }
@@ -46,6 +95,7 @@ public:
     void setName(const std::string& name) {
         m_name = name;
     }
+#endif
 
     Scene* scene() {
         return m_scene;
@@ -73,13 +123,11 @@ public:
         if (!script) {
             return;
         }
-
         for (Script* existingScript : m_scripts) {
             if (existingScript == script) {
                 return;
             }
         }
-
         script->setGameObject(this);
         m_scripts.push_back(script);
     }
