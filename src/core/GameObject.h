@@ -1,16 +1,15 @@
 #pragma once
 
 #include "Mesh.h"
+#include "FixedVector.h"
+#include "RuntimeLimits.h"
 #include "Script.h"
 #include "Transform.h"
 #include <stdint.h>
 #ifdef ARDUINO
 #include <Arduino.h>
-#include "FixedVector.h"
-#include "NanoRuntimeConfig.h"
 #else
 #include <string>
-#include <vector>
 #endif
 
 namespace nut {
@@ -28,11 +27,13 @@ class GameObject {
 private:
 #ifdef ARDUINO
     const char* m_name;
-    FixedVector<Script*, NUT_MAX_SCRIPTS_PER_OBJECT> m_scripts;
-    int16_t m_meshIndex;
 #else
     std::string m_name;
-    std::vector<Script*> m_scripts;
+#endif
+    FixedVector<Script*, NUT_MAX_SCRIPTS_PER_OBJECT> m_scripts;
+    FixedVector<GameObject*, NUT_MAX_CHILDREN_PER_OBJECT> m_children;
+#ifdef ARDUINO
+    int16_t m_meshIndex;
 #endif
     Scene* m_scene;
 
@@ -48,26 +49,22 @@ public:
     Mesh* mesh; // Pointer to allow sharing the same mesh across multiple objects.
 
 #ifdef ARDUINO
-    FixedVector<GameObject*, NUT_MAX_CHILDREN_PER_OBJECT> children;
-
     explicit GameObject(const char* name = "GameObject")
         : m_name(name)
         , m_scripts()
+        , m_children()
         , m_meshIndex(-1)
         , m_scene(nullptr)
         , transform()
         , mesh(nullptr)
-        , children()
 #else
-    std::vector<GameObject*> children;
-
     explicit GameObject(const std::string& name = "GameObject")
         : m_name(name)
         , m_scripts()
+        , m_children()
         , m_scene(nullptr)
         , transform()
         , mesh(nullptr)
-        , children()
 #endif
     {}
 
@@ -110,7 +107,7 @@ public:
     void setScene(Scene* scene) {
         m_scene = scene;
 
-        for (GameObject* child : children) {
+        for (GameObject* child : m_children) {
             if (child) {
                 child->setScene(scene);
             }
@@ -128,8 +125,9 @@ public:
                 return;
             }
         }
-        script->setGameObject(this);
-        m_scripts.push_back(script);
+        if (m_scripts.push_back(script)) {
+            script->setGameObject(this);
+        }
     }
 
     // Finds the first script of a specific C++ type attached to this GameObject.
@@ -166,7 +164,7 @@ public:
             }
         }
 
-        for (GameObject* child : children) {
+        for (GameObject* child : m_children) {
             if (child) {
                 child->startScripts();
             }
@@ -181,7 +179,7 @@ public:
             }
         }
 
-        for (GameObject* child : children) {
+        for (GameObject* child : m_children) {
             if (child) {
                 child->updateScripts(deltaTime);
             }
@@ -193,23 +191,36 @@ public:
     // meaning the child will move, rotate, and scale relative to this object.
     void addChild(GameObject* child) {
         if (child) {
-            child->transform.parent = &this->transform;
-            child->setScene(m_scene);
-            children.push_back(child);
+            if (m_children.push_back(child)) {
+                child->transform.parent = &this->transform;
+                child->setScene(m_scene);
+            }
         }
+    }
+
+    size_t childObjectCount() const {
+        return m_children.size();
+    }
+
+    GameObject* childObjectAt(size_t index) {
+        return index < m_children.size() ? m_children[index] : nullptr;
+    }
+
+    const GameObject* childObjectAt(size_t index) const {
+        return index < m_children.size() ? m_children[index] : nullptr;
     }
 
     // Removes child links from this object.
     // This does not delete the child objects; it only clears the hierarchy relationship.
     void clearChildren() {
-        for (GameObject* child : children) {
+        for (GameObject* child : m_children) {
             if (child) {
                 child->transform.parent = nullptr;
                 child->setScene(nullptr);
             }
         }
 
-        children.clear();
+        m_children.clear();
     }
 };
 

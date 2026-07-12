@@ -11,10 +11,16 @@ GameObject* RuntimeScene::allocateObject(ObjectNameParam name) {
         return nullptr;
     }
 
-    void* storage = static_cast<void*>(m_objectStorage[m_ownedObjects.size()]);
+    void* storage = static_cast<void*>(m_objectStorage[m_ownedObjects.size()].bytes);
     memset(storage, 0, sizeof(GameObject));
+
+    // Placement-new calls GameObject's constructor at this existing address.
+    // Unlike ordinary `new GameObject`, it does not allocate memory: `storage`
+    // already points to the next fixed slot owned by RuntimeScene.
     return new (storage) GameObject(name);
 #else
+    // This is ordinary desktop heap allocation. `std::nothrow` only changes
+    // failure behavior so allocation failure returns nullptr instead of throwing.
     return new (std::nothrow) GameObject(name);
 #endif
 }
@@ -34,6 +40,8 @@ void RuntimeScene::destroyObject(GameObject* object) {
     }
 
 #ifdef ARDUINO
+    // Placement-new does not pair with delete. Invoke the destructor directly;
+    // the slot itself remains part of RuntimeScene and can be reused later.
     object->~GameObject();
 #else
     delete object;
@@ -80,6 +88,54 @@ void RuntimeScene::resetBinarySceneState() {
 
 RuntimeScene::~RuntimeScene() {
     clearLoadedData();
+}
+
+bool RuntimeScene::addObject(GameObject* obj) {
+    if (!obj) {
+        return false;
+    }
+
+    obj->setScene(this);
+#ifdef ARDUINO
+    return m_rootObjects.push_back(obj);
+#else
+    m_rootObjects.push_back(obj);
+    return true;
+#endif
+}
+
+void RuntimeScene::clearObjects() {
+    for (GameObject* obj : m_rootObjects) {
+        if (obj) {
+            obj->setScene(nullptr);
+        }
+    }
+
+    m_rootObjects.clear();
+}
+
+size_t RuntimeScene::rootObjectCount() const {
+    return m_rootObjects.size();
+}
+
+GameObject* RuntimeScene::rootObjectAt(size_t index) {
+    return index < m_rootObjects.size() ? m_rootObjects[index] : nullptr;
+}
+
+const GameObject* RuntimeScene::rootObjectAt(size_t index) const {
+    return index < m_rootObjects.size() ? m_rootObjects[index] : nullptr;
+}
+
+size_t RuntimeScene::loadedObjectCount() const {
+    return m_ownedObjects.size();
+}
+
+GameObject* RuntimeScene::loadedObjectAt(size_t index) {
+    return index < m_ownedObjects.size() ? m_ownedObjects[index] : nullptr;
+}
+
+const GameObject* RuntimeScene::loadedObjectAt(size_t index) const {
+    return index < m_ownedObjects.size() ? m_ownedObjects[index] : nullptr;
 }
 
 void RuntimeScene::clearLoadedData() {
@@ -172,6 +228,13 @@ void RuntimeScene::runCompiledScripts(float deltaTime) {
             break;
         case DummyScript::kScriptId:
             (void)script.config.dummy.enabled;
+            break;
+        case PlayerMoveScript::kScriptId:
+            object->transform.position.x += inputState().moveX * script.config.playerMove.unitsPerSecondX * deltaTime;
+            object->transform.position.y += inputState().moveY * script.config.playerMove.unitsPerSecondY * deltaTime;
+            if (inputState().primaryPressed) {
+                object->transform.position.z += script.config.playerMove.unitsPerSecondZ * deltaTime;
+            }
             break;
         default:
             break;

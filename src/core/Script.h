@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdint.h>
+
 #ifndef ARDUINO
 #include <string>
 #endif
@@ -7,6 +9,7 @@
 namespace nut {
 
 class GameObject;
+struct InputState;
 class Scene;
 
 // Script is a reusable behavior that can be attached to a GameObject.
@@ -49,16 +52,18 @@ public:
     Scene* scene();
     const Scene* scene() const;
 
+    const InputState* inputState() const;
+
     // Finds another object in the same scene by name.
     // Example: GameObject* door = findObject("Door");
 #ifndef ARDUINO
     GameObject* findObject(const std::string& objectName);
     const GameObject* findObject(const std::string& objectName) const;
+#endif
 
     // Scripts can request scene changes through their owning GameObject/Scene.
     // The SceneManager applies the change after the current update finishes.
-    void requestSceneChange(const std::string& sceneName);
-#endif
+    void requestSceneChange(uint16_t sceneId);
 };
 
 } // namespace nut

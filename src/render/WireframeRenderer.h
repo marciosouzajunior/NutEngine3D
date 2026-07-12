@@ -3,7 +3,7 @@
 #include "Graphics.h"
 #include "../core/Scene.h"
 #ifdef ARDUINO
-#include "../core/NanoRuntimeConfig.h"
+#include "../core/RuntimeLimits.h"
 #endif
 #include "../math/Vec2.h"
 
@@ -47,7 +47,8 @@ private:
         }
 
         // 4. Render all children (they will compute their own world matrix based on this parent)
-        for (GameObject* child : obj->children) {
+        for (size_t i = 0; i < obj->childObjectCount(); ++i) {
+            GameObject* child = obj->childObjectAt(i);
             renderObject(child, viewProjMatrix);
         }
     }
@@ -134,7 +135,8 @@ public:
         math::Mat4 viewProjMatrix = projMatrix * viewMatrix;
 
         // Traverse the scene graph starting from the root objects
-        for (GameObject* obj : scene.rootObjects()) {
+        for (size_t i = 0; i < scene.rootObjectCount(); ++i) {
+            GameObject* obj = scene.rootObjectAt(i);
             renderObject(obj, viewProjMatrix);
         }
     }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "DummyScript.h"
+#include "PlayerMoveScript.h"
 #include "SpinScript.h"
 
 #ifndef ARDUINO
@@ -20,6 +21,10 @@ inline uint16_t scriptIdFromName(const std::string& name) {
         return DummyScript::kScriptId;
     }
 
+    if (name == PlayerMoveScript::kTypeName) {
+        return PlayerMoveScript::kScriptId;
+    }
+
     return 0;
 }
 #endif
@@ -30,6 +35,8 @@ inline const char* scriptNameFromId(uint16_t scriptId) {
         return SpinScript::kTypeName;
     case DummyScript::kScriptId:
         return DummyScript::kTypeName;
+    case PlayerMoveScript::kScriptId:
+        return PlayerMoveScript::kTypeName;
     default:
         return "";
     }

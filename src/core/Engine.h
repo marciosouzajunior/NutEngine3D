@@ -45,11 +45,15 @@ public:
 
             // Scene-specific behavior happens here.
             // Later, this can update scripts/components attached to objects.
+            Scene* activeScene = sceneManager.activeScene();
+            if (activeScene) {
+                activeScene->setInputState(m_graphics->sampleInput());
+            }
             sceneManager.update(deltaTime);
 
             // Rendering is centralized in the engine, so scenes define content
             // and behavior without needing to know the frame drawing order.
-            Scene* activeScene = sceneManager.activeScene();
+            activeScene = sceneManager.activeScene();
             if (activeScene) {
                 m_graphics->beginFrame();
                 m_graphics->clear();

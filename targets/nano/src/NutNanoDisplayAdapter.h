@@ -25,6 +25,67 @@ private:
     uint8_t m_currentPage;
     bool m_ready;
 
+    static uint8_t lineOutcode(int x, int y, int minY, int maxY) {
+        uint8_t code = 0;
+        if (x < 0) {
+            code |= 1;
+        } else if (x >= NUT_OLED_PHYSICAL_WIDTH) {
+            code |= 2;
+        }
+        if (y < minY) {
+            code |= 4;
+        } else if (y > maxY) {
+            code |= 8;
+        }
+        return code;
+    }
+
+    // Clip a line to the current 128x8 page before Bresenham walks it.
+    // Without this step, every intersected OLED page repeats the whole line,
+    // including pixels that belong to other pages. The clipping math uses only
+    // local integers and adds no persistent SRAM cost.
+    static bool clipLineToPage(int& x1, int& y1, int& x2, int& y2, int minY, int maxY) {
+        uint8_t out1 = lineOutcode(x1, y1, minY, maxY);
+        uint8_t out2 = lineOutcode(x2, y2, minY, maxY);
+
+        while (true) {
+            if ((out1 | out2) == 0) {
+                return true;
+            }
+            if ((out1 & out2) != 0) {
+                return false;
+            }
+
+            const uint8_t out = out1 != 0 ? out1 : out2;
+            int x = 0;
+            int y = 0;
+
+            if ((out & 4) != 0) {
+                y = minY;
+                x = x1 + (x2 - x1) * (minY - y1) / (y2 - y1);
+            } else if ((out & 8) != 0) {
+                y = maxY;
+                x = x1 + (x2 - x1) * (maxY - y1) / (y2 - y1);
+            } else if ((out & 2) != 0) {
+                x = NUT_OLED_PHYSICAL_WIDTH - 1;
+                y = y1 + (y2 - y1) * (x - x1) / (x2 - x1);
+            } else {
+                x = 0;
+                y = y1 + (y2 - y1) * (0 - x1) / (x2 - x1);
+            }
+
+            if (out == out1) {
+                x1 = x;
+                y1 = y;
+                out1 = lineOutcode(x1, y1, minY, maxY);
+            } else {
+                x2 = x;
+                y2 = y;
+                out2 = lineOutcode(x2, y2, minY, maxY);
+            }
+        }
+    }
+
     void sendCommand(uint8_t command) {
         Wire.beginTransmission(NUT_OLED_ADDR);
         Wire.write(0x00);
@@ -135,6 +196,10 @@ public:
             return;
         }
         if (maxY < pageStartY || minY > pageEndY) {
+            return;
+        }
+
+        if (!clipLineToPage(x1, y1, x2, y2, pageStartY, pageEndY)) {
             return;
         }
 

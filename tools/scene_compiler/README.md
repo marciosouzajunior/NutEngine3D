@@ -30,9 +30,27 @@ On Windows, you can use:
 
 - `tools/scene_compiler/build.bat`
 - `tools/scene_compiler/run.bat`
+- `tools/scene_compiler/run_scene.bat`
 
 The run helper compiles `assets/scenes/demo.nutscene` into
 `build/assets/nano/demo_scene.h`.
+
+The generic scene helper lets you replace the Nano scene header with any
+authored scene:
+
+```bat
+tools\scene_compiler\run_scene.bat assets\scenes\stress_objects_4.nutscene
+```
+
+## Nano hierarchy rule
+
+For the Nano target, scenes currently support only:
+
+- root objects
+- one direct child level under each root
+
+Grandchildren are rejected by the compiler with a clear error message. This
+keeps the Nano traversal and memory usage predictable.
 
 ## Current output format
 

@@ -3,12 +3,13 @@
 #include "../core/Mesh.h"
 #include "../core/Scene.h"
 #include "../../assets/scripts/DummyScript.h"
+#include "../../assets/scripts/PlayerMoveScript.h"
 #include "../../assets/scripts/SpinScript.h"
 #include <stddef.h>
 #include <stdint.h>
 #ifdef ARDUINO
 #include "../core/FixedVector.h"
-#include "../core/NanoRuntimeConfig.h"
+#include "../core/RuntimeLimits.h"
 #else
 #include <string>
 #include <vector>
@@ -45,6 +46,13 @@ public:
         bool enabled = true;
     };
 
+    // Compiled config payload for PlayerMoveScript inside the scene binary.
+    struct NutPlayerMoveConfig {
+        float unitsPerSecondX = 0.0f;
+        float unitsPerSecondY = 0.0f;
+        float unitsPerSecondZ = 0.0f;
+    };
+
     // One runtime script instance decoded from the scene binary.
     //
     // It points to a GameObject by index and stores only the compact config
@@ -55,6 +63,7 @@ public:
         union Config {
             NutSpinConfig spin;
             NutDummyConfig dummy;
+            NutPlayerMoveConfig playerMove;
 
             Config() : spin() {}
         } config;
@@ -63,9 +72,19 @@ public:
 private:
 #ifdef ARDUINO
     using ObjectNameParam = const char*;
+    using RootObjectList = FixedVector<GameObject*, NUT_MAX_ROOT_OBJECTS>;
     using OwnedObjectList = FixedVector<GameObject*, NUT_MAX_OWNED_OBJECTS>;
     using OwnedMeshList = FixedVector<Mesh*, NUT_MAX_OWNED_MESHES>;
     using ScriptInstanceList = FixedVector<NutScriptInstance, NUT_MAX_OWNED_SCRIPTS>;
+
+    // Placement-new constructs each GameObject inside one of these fixed SRAM
+    // slots instead of allocating it from the heap. Every slot must therefore
+    // have both sizeof(GameObject) bytes and GameObject's required alignment.
+    // Aligning only a 2D byte array would not guarantee that later rows start
+    // at an address valid for GameObject.
+    struct ObjectStorageSlot {
+        alignas(GameObject) uint8_t bytes[sizeof(GameObject)];
+    };
 
     // Nano-side descriptor telling the renderer where one mesh lives in the
     // binary scene blob. The actual geometry stays in flash.
@@ -75,15 +94,17 @@ private:
         uint16_t edgeCount = 0;
     };
     FixedVector<BinaryMeshInfo, NUT_MAX_MESHES> m_binaryMeshes;
-    alignas(GameObject) uint8_t m_objectStorage[NUT_MAX_OWNED_OBJECTS][sizeof(GameObject)];
+    ObjectStorageSlot m_objectStorage[NUT_MAX_OWNED_OBJECTS];
     const uint8_t* m_binarySceneData = nullptr;
     uint16_t m_binaryMeshDataOffset = 0;
 #else
     using ObjectNameParam = const std::string&;
+    using RootObjectList = std::vector<GameObject*>;
     using OwnedObjectList = std::vector<GameObject*>;
     using OwnedMeshList = std::vector<Mesh*>;
     using ScriptInstanceList = std::vector<NutScriptInstance>;
 #endif
+    RootObjectList m_rootObjects;
     OwnedObjectList m_ownedObjects;
     OwnedMeshList m_ownedMeshes;
     ScriptInstanceList m_scriptInstances;
@@ -103,6 +124,18 @@ public:
 
     // Drop every loaded object/script/mesh from the previous compiled scene.
     void clearLoadedData();
+
+    bool addObject(GameObject* obj) override;
+    void clearObjects() override;
+    size_t rootObjectCount() const override;
+    GameObject* rootObjectAt(size_t index) override;
+    const GameObject* rootObjectAt(size_t index) const override;
+
+    // Access every runtime-owned object in load order.
+    // The Nano renderer uses this flat list to avoid recursive scene traversal.
+    size_t loadedObjectCount() const;
+    GameObject* loadedObjectAt(size_t index);
+    const GameObject* loadedObjectAt(size_t index) const;
 
     GameObject* createObject(ObjectNameParam name);
 

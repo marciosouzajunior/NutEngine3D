@@ -8,6 +8,8 @@
 #include <iostream>
 
 int main() {
+    static constexpr uint16_t kDemoSceneId = 1;
+
     std::cout << "Starting NutEngine3D V0..." << std::endl;
 
     // 1. Initialize the Raylib graphics backend.
@@ -31,8 +33,8 @@ int main() {
 
     // 4. Register scenes and choose which one starts first.
     nut::SceneManager sceneManager;
-    sceneManager.registerScene("Demo", &scene);
-    sceneManager.changeScene("Demo");
+    sceneManager.registerScene(kDemoSceneId, &scene);
+    sceneManager.changeScene(kDemoSceneId);
 
     // 5. Let the engine run the active scene.
     engine.run(sceneManager);

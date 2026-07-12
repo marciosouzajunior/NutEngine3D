@@ -4,3 +4,4 @@
 #include "../../../src/core/Script.cpp"
 #include "../../../assets/scripts/SpinScript.cpp"
 #include "../../../assets/scripts/DummyScript.cpp"
+#include "../../../assets/scripts/PlayerMoveScript.cpp"

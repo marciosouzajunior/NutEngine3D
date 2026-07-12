@@ -4,8 +4,9 @@
 #ifdef ARDUINO
 #include <Arduino.h>
 #include <avr/pgmspace.h>
+#include <new>
 #include "../core/FixedVector.h"
-#include "../core/NanoRuntimeConfig.h"
+#include "../core/RuntimeLimits.h"
 #else
 #include <iostream>
 #include <string>
@@ -63,28 +64,28 @@ struct Header {
 
 struct MeshRecord {
     // Per-mesh summary. The actual vertex/edge data lives later in the blob.
-    uint16_t vertexCount = 0;
-    uint16_t edgeCount = 0;
+    uint16_t vertexCount;
+    uint16_t edgeCount;
 };
 
 struct ObjectRecord {
     // Per-object transform/hierarchy metadata plus the range of script records
     // that belong to this object.
-    uint16_t nameOffset = 0;
-    int16_t parentIndex = -1;
-    int16_t meshIndex = -1;
-    uint16_t firstScriptIndex = 0;
-    uint16_t scriptCount = 0;
-    float position[3] {0.0f, 0.0f, 0.0f};
-    float rotation[3] {0.0f, 0.0f, 0.0f};
-    float scale[3] {1.0f, 1.0f, 1.0f};
+    uint16_t nameOffset;
+    int16_t parentIndex;
+    int16_t meshIndex;
+    uint16_t firstScriptIndex;
+    uint16_t scriptCount;
+    float position[3];
+    float rotation[3];
+    float scale[3];
 };
 
 struct ScriptRecord {
     // Per-script metadata pointing into the packed script-config region.
-    uint16_t scriptId = 0;
-    uint16_t configOffset = 0;
-    uint16_t configSize = 0;
+    uint16_t scriptId;
+    uint16_t configOffset;
+    uint16_t configSize;
 };
 
 class ByteReader {
@@ -178,21 +179,30 @@ public:
 
 #ifdef ARDUINO
 struct LoadWorkspace {
-    // Temporary Nano-side workspace used while decoding the scene.
-    // This avoids heap allocation during loading.
-    uint8_t stringTable[NUT_MAX_STRING_TABLE_BYTES] {};
-    uint16_t stringTableSize = 0;
-    MeshRecord meshRecords[NUT_MAX_MESHES] {};
-    uint16_t meshRecordCount = 0;
-    ObjectRecord objectRecords[NUT_MAX_OBJECTS] {};
-    uint16_t objectRecordCount = 0;
-    ScriptRecord scriptRecords[NUT_MAX_SCRIPT_RECORDS] {};
-    uint16_t scriptRecordCount = 0;
-    GameObject* objects[NUT_MAX_OBJECTS] {};
-    uint16_t objectCount = 0;
+    // Temporary records used only while decoding the scene. The Nano target
+    // supplies this memory so it can become renderer storage after loading.
+    // Keep this type free of default member initializers. Value-initializing
+    // these arrays made AVR emit a large SRAM-backed initialization template.
+    uint8_t* stringTable;
+    uint16_t stringTableSize;
+    MeshRecord meshRecords[NUT_MAX_MESHES];
+    uint16_t meshRecordCount;
+    ObjectRecord objectRecords[NUT_MAX_OBJECTS];
+    uint16_t objectRecordCount;
+    ScriptRecord scriptRecords[NUT_MAX_SCRIPT_RECORDS];
+    uint16_t scriptRecordCount;
+    GameObject* objects[NUT_MAX_OBJECTS];
+    uint16_t objectCount;
 };
 
-static LoadWorkspace g_loadWorkspace;
+// Object names point into this table after loading, so unlike LoadWorkspace it
+// must remain alive for the whole scene lifetime.
+static uint8_t g_sceneStringTable[NUT_MAX_STRING_TABLE_BYTES];
+
+static_assert(
+    sizeof(LoadWorkspace) <= SceneBinaryLoader::NANO_SCRATCH_BYTES,
+    "Nano scene-loader scratch is too small for the configured runtime limits."
+);
 #else
 using StringTableBuffer = std::vector<uint8_t>;
 using MeshRecordBuffer = std::vector<MeshRecord>;
@@ -264,7 +274,7 @@ bool decodeScriptConfig(
     }
 
     instance.objectIndex = objectIndex;
-    instance.scriptId = static_cast<uint8_t>(scriptRecord.scriptId);
+    instance.scriptId = scriptRecord.scriptId;
 
     ByteReader configReader(data + scriptRecord.configOffset, scriptRecord.configSize);
     switch (scriptRecord.scriptId) {
@@ -283,6 +293,13 @@ bool decodeScriptConfig(
         instance.config.dummy.enabled = enabled != 0;
         return true;
     }
+    case PlayerMoveScript::kScriptId:
+        if (scriptRecord.configSize != sizeof(float) * 3) {
+            return false;
+        }
+        return configReader.readF32(instance.config.playerMove.unitsPerSecondX)
+            && configReader.readF32(instance.config.playerMove.unitsPerSecondY)
+            && configReader.readF32(instance.config.playerMove.unitsPerSecondZ);
     default:
         return false;
     }
@@ -294,6 +311,10 @@ bool SceneBinaryLoader::load(
     const uint8_t* data,
     size_t size,
     RuntimeScene& outScene
+#ifdef ARDUINO
+    , void* scratch,
+    size_t scratchSize
+#endif
 ) {
     // High-level loading pipeline:
     // 1. read header
@@ -335,7 +356,19 @@ bool SceneBinaryLoader::load(
     #endif
 
     #ifdef ARDUINO
-    LoadWorkspace& workspace = g_loadWorkspace;
+    if (!scratch
+        || scratchSize < sizeof(LoadWorkspace)
+        || (reinterpret_cast<uintptr_t>(scratch) % alignof(LoadWorkspace)) != 0) {
+        logMessage(NUT_LOG_LITERAL("Invalid Nano scene-loader scratch."));
+        return false;
+    }
+
+    // Construct the temporary workspace in target-owned memory. No heap is
+    // involved, and the caller may reuse these bytes as soon as load returns.
+    // Default-initialize the POD without clearing its arrays. Every record is
+    // decoded before use, while the counters below define the valid ranges.
+    LoadWorkspace& workspace = *new (scratch) LoadWorkspace;
+    workspace.stringTable = g_sceneStringTable;
     workspace.stringTableSize = 0;
     workspace.meshRecordCount = 0;
     workspace.objectRecordCount = 0;

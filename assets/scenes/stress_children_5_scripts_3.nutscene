@@ -1,0 +1,71 @@
+{
+  "name": "S5Scripts3",
+  "camera": {
+    "position": [0, 0, -12],
+    "rotation": [0, 0, 0],
+    "fov": 60
+  },
+  "objects": [
+    {
+      "name": "P",
+      "position": [0, 0, 0],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1],
+      "scripts": [
+        {
+          "type": "SpinScript",
+          "rotationSpeed": [0.35, 0.90, 0.0]
+        }
+      ],
+      "children": [
+        {
+          "name": "A",
+          "mesh": "assets/models/cube.obj",
+          "position": [-4.0, 0, 0],
+          "rotation": [0, 0, 0],
+          "scale": [0.13, 0.13, 0.13],
+          "scripts": [
+            {
+              "type": "PlayerMoveScript",
+              "unitsPerSecond": [1.0, 1.0, 0.0]
+            }
+          ]
+        },
+        {
+          "name": "B",
+          "mesh": "assets/models/cube.obj",
+          "position": [-2.0, 0, 0],
+          "rotation": [0, 0, 0],
+          "scale": [0.13, 0.13, 0.13],
+          "scripts": [
+            {
+              "type": "DummyScript",
+              "enabled": true
+            }
+          ]
+        },
+        {
+          "name": "C",
+          "mesh": "assets/models/cube.obj",
+          "position": [0, 0, 0],
+          "rotation": [0, 0, 0],
+          "scale": [0.13, 0.13, 0.13]
+        },
+        {
+          "name": "D",
+          "mesh": "assets/models/cube.obj",
+          "position": [2.0, 0, 0],
+          "rotation": [0, 0, 0],
+          "scale": [0.13, 0.13, 0.13]
+        },
+        {
+          "name": "E",
+          "mesh": "assets/models/cube.obj",
+          "position": [4.0, 0, 0],
+          "rotation": [0, 0, 0],
+          "scale": [0.13, 0.13, 0.13]
+        }
+      ]
+    }
+  ]
+}

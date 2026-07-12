@@ -3,7 +3,7 @@
 #include "../math/Vec3.h"
 #ifdef ARDUINO
 #include "FixedVector.h"
-#include "NanoRuntimeConfig.h"
+#include "RuntimeLimits.h"
 #else
 #include <vector>
 #endif

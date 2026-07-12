@@ -59,6 +59,8 @@ private:
     uint16_t m_lastAttemptedEdges = 0;
     uint16_t m_lastVisibleEdges = 0;
     uint16_t m_lastOffscreenRejectedEdges = 0;
+    uint8_t m_cacheBuildFailed = 0;
+    uint8_t m_cacheReadErrors = 0;
     FixedVector<CachedVertex, kMaxCachedVertices> m_cachedVertices;
     FixedVector<CachedObjectMesh, NUT_MAX_OWNED_OBJECTS> m_cachedObjects;
 
@@ -218,6 +220,10 @@ private:
         uint8_t vertexCount
     ) const {
         uint16_t visibleEdges = 0;
+        const size_t cacheLimit = static_cast<size_t>(vertexStart) + static_cast<size_t>(vertexCount);
+        if (cacheLimit > m_cachedVertices.size()) {
+            return 0;
+        }
 
         for (uint16_t edgeIndex = 0; edgeIndex < edgeCount; ++edgeIndex) {
             const size_t edgeOffset = static_cast<size_t>(edgeBaseOffset) + static_cast<size_t>(edgeIndex) * 4;
@@ -262,7 +268,8 @@ private:
             return;
         }
 
-        if (m_cachedVertices.size() + vertexCount > kMaxCachedVertices) {
+        if (m_cachedVertices.size() + vertexCount > kMaxCachedVertices || m_cachedObjects.size() >= NUT_MAX_OWNED_OBJECTS) {
+            m_cacheBuildFailed = 1;
             return;
         }
 
@@ -296,52 +303,32 @@ private:
                 sharedOutcode = 0;
             }
 
-            m_cachedVertices.push_back(CachedVertex {
+            if (!m_cachedVertices.push_back(CachedVertex {
                 visible ? clampToI8(projected.x) : static_cast<int8_t>(0),
                 visible ? clampToI8(projected.y) : static_cast<int8_t>(0),
                 static_cast<uint8_t>(visible ? 1 : 0)
-            });
+            })) {
+                m_cacheBuildFailed = 1;
+                return;
+            }
         }
 
-        m_cachedObjects.push_back(CachedObjectMesh {
+        if (!m_cachedObjects.push_back(CachedObjectMesh {
             vertexStart,
             static_cast<uint8_t>(vertexCount),
             edgeBaseOffset,
             edgeCount,
             allVerticesProjected ? sharedOutcode : static_cast<uint8_t>(0)
-        });
+        })) {
+            m_cacheBuildFailed = 1;
+            return;
+        }
 
         m_lastAttemptedEdges = static_cast<uint16_t>(m_lastAttemptedEdges + edgeCount);
         m_lastVisibleEdges = static_cast<uint16_t>(
             m_lastVisibleEdges + countVisibleEdges(sceneData, edgeBaseOffset, edgeCount, vertexStart, static_cast<uint8_t>(vertexCount))
         );
-    }
 
-    void cacheObject(
-        const RuntimeScene& scene,
-        GameObject* obj,
-        const math::Vec3& parentPosition,
-        const math::Vec3& parentRotation,
-        const math::Vec3& cameraPosition
-    ) {
-        // Traverse one object subtree, accumulate parent transforms,
-        // and prepare caches for every mesh that belongs to this subtree.
-        if (!obj) {
-            return;
-        }
-        const RotationTrig parentTrig = buildRotationTrig(parentRotation);
-        const math::Vec3 localPosition = rotateXYZ(obj->transform.position, parentTrig);
-        const math::Vec3 worldPosition = parentPosition + localPosition;
-        const math::Vec3 worldRotation = parentRotation + obj->transform.rotation;
-        const RotationTrig worldTrig = buildRotationTrig(worldRotation);
-
-        if (obj->meshIndex() >= 0) {
-            cacheBinaryMesh(scene, obj, obj->meshIndex(), worldPosition, worldTrig, cameraPosition);
-        }
-
-        for (GameObject* child : obj->children) {
-            cacheObject(scene, child, worldPosition, worldRotation, cameraPosition);
-        }
     }
 
 public:
@@ -364,14 +351,54 @@ public:
         m_lastAttemptedEdges = 0;
         m_lastVisibleEdges = 0;
         m_lastOffscreenRejectedEdges = 0;
+        m_cacheBuildFailed = 0;
+        m_cacheReadErrors = 0;
         m_cachedVertices.clear();
         m_cachedObjects.clear();
 
         const math::Vec3 cameraPosition = scene.camera().transform.position;
-        const math::Vec3 zero(0.0f, 0.0f, 0.0f);
+        for (size_t i = 0; i < scene.rootObjectCount(); ++i) {
+            // Nano scenes intentionally stop at two hierarchy levels:
+            // root objects and one child layer.
+            const GameObject* root = scene.rootObjectAt(i);
+            if (!root) {
+                continue;
+            }
 
-        for (GameObject* obj : scene.rootObjects()) {
-            cacheObject(scene, obj, zero, zero, cameraPosition);
+            // A root has no parent transform, so its local transform is already
+            // the world transform. Avoid calculating sin/cos for a zero parent.
+            const math::Vec3 rootWorldPosition = root->transform.position;
+            const math::Vec3 rootWorldRotation = root->transform.rotation;
+            const RotationTrig rootWorldTrig = buildRotationTrig(rootWorldRotation);
+
+            if (root->meshIndex() >= 0) {
+                cacheBinaryMesh(scene, root, root->meshIndex(), rootWorldPosition, rootWorldTrig, cameraPosition);
+            }
+
+            for (size_t childIndex = 0; childIndex < root->childObjectCount(); ++childIndex) {
+                const GameObject* child = root->childObjectAt(childIndex);
+                if (!child) {
+                    continue;
+                }
+
+                const math::Vec3 childLocalPosition = rotateXYZ(child->transform.position, rootWorldTrig);
+                const math::Vec3 childWorldPosition = rootWorldPosition + childLocalPosition;
+                const math::Vec3& childRotation = child->transform.rotation;
+                const bool hasLocalRotation = childRotation.x != 0.0f
+                    || childRotation.y != 0.0f
+                    || childRotation.z != 0.0f;
+
+                // Most Nano scenes rotate a parent pivot while children keep a
+                // zero local rotation. In that common case their world rotation
+                // equals the parent's, so reuse its six sin/cos results.
+                const RotationTrig childWorldTrig = hasLocalRotation
+                    ? buildRotationTrig(rootWorldRotation + childRotation)
+                    : rootWorldTrig;
+
+                if (child->meshIndex() >= 0) {
+                    cacheBinaryMesh(scene, child, child->meshIndex(), childWorldPosition, childWorldTrig, cameraPosition);
+                }
+            }
         }
     }
 
@@ -424,6 +451,22 @@ public:
 
     uint16_t lastOffscreenRejectedEdges() const {
         return m_lastOffscreenRejectedEdges;
+    }
+
+    size_t cachedVertexCount() const {
+        return m_cachedVertices.size();
+    }
+
+    size_t cachedObjectCount() const {
+        return m_cachedObjects.size();
+    }
+
+    uint8_t cacheBuildFailed() const {
+        return m_cacheBuildFailed;
+    }
+
+    uint8_t cacheReadErrors() const {
+        return m_cacheReadErrors;
     }
 };
 

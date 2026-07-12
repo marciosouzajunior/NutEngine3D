@@ -93,6 +93,26 @@ public:
         // GetFrameTime returns seconds since the previous rendered frame.
         return GetFrameTime();
     }
+
+    InputState sampleInput() const override {
+        InputState input;
+
+        if (IsKeyDown(KEY_LEFT) || IsKeyDown(KEY_A)) {
+            input.moveX -= 1.0f;
+        }
+        if (IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D)) {
+            input.moveX += 1.0f;
+        }
+        if (IsKeyDown(KEY_DOWN) || IsKeyDown(KEY_S)) {
+            input.moveY -= 1.0f;
+        }
+        if (IsKeyDown(KEY_UP) || IsKeyDown(KEY_W)) {
+            input.moveY += 1.0f;
+        }
+
+        input.primaryPressed = IsKeyDown(KEY_SPACE);
+        return input;
+    }
 };
 
 } // namespace nut

@@ -1,5 +1,6 @@
 #include "Script.h"
 #include "GameObject.h"
+#include "InputState.h"
 #include "Scene.h"
 
 namespace nut {
@@ -34,6 +35,21 @@ const Scene* Script::scene() const {
     return m_gameObject->scene();
 }
 
+const InputState* Script::inputState() const {
+    const Scene* ownerScene = scene();
+    if (!ownerScene) {
+        return nullptr;
+    }
+
+    return &ownerScene->inputState();
+}
+
+void Script::requestSceneChange(uint16_t sceneId) {
+    if (m_gameObject && m_gameObject->scene()) {
+        m_gameObject->scene()->requestSceneChange(sceneId);
+    }
+}
+
 #ifndef ARDUINO
 GameObject* Script::findObject(const std::string& objectName) {
     if (!scene()) {
@@ -49,12 +65,6 @@ const GameObject* Script::findObject(const std::string& objectName) const {
     }
 
     return scene()->findObject(objectName);
-}
-
-void Script::requestSceneChange(const std::string& sceneName) {
-    if (m_gameObject && m_gameObject->scene()) {
-        m_gameObject->scene()->requestSceneChange(sceneName);
-    }
 }
 #endif
 

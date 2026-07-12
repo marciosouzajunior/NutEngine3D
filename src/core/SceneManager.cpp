@@ -5,17 +5,17 @@ namespace nut {
 SceneManager::SceneManager()
     : m_activeScene(nullptr), m_pendingScene(nullptr) {}
 
-void SceneManager::registerScene(const std::string& name, Scene* scene) {
+void SceneManager::registerScene(uint16_t id, Scene* scene) {
     if (!scene) {
         return;
     }
 
-    m_scenes[name] = scene;
+    m_scenes[id] = scene;
     scene->setSceneManager(this);
 }
 
-void SceneManager::changeScene(const std::string& name) {
-    auto it = m_scenes.find(name);
+void SceneManager::changeScene(uint16_t id) {
+    auto it = m_scenes.find(id);
     if (it == m_scenes.end()) {
         return;
     }

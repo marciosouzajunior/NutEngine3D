@@ -90,4 +90,8 @@ public:
     float deltaTime() const override {
         return m_deltaTime;
     }
+
+    nut::InputState sampleInput() const override {
+        return nut::InputState {};
+    }
 };

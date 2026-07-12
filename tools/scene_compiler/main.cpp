@@ -112,13 +112,20 @@ int meshIndexForPath(
     return index;
 }
 
-void flattenObjectTree(
+bool flattenObjectTree(
     const nut::Json& objectJson,
     int parentIndex,
+    int depth,
     std::map<std::string, int>& meshIndices,
     std::vector<std::string>& meshPaths,
-    std::vector<CompiledObject>& compiledObjects
+    std::vector<CompiledObject>& compiledObjects,
+    std::string& error
 ) {
+    if (depth > 1) {
+        error = "Nano scenes support only root objects and one child level.";
+        return false;
+    }
+
     CompiledObject object;
     object.name = objectJson.get("name").asString("GameObject");
     object.parentIndex = parentIndex;
@@ -137,12 +144,16 @@ void flattenObjectTree(
 
     const nut::Json& children = objectJson.get("children");
     if (!children.isArray()) {
-        return;
+        return true;
     }
 
     for (size_t i = 0; i < children.size(); ++i) {
-        flattenObjectTree(children.at(i), objectIndex, meshIndices, meshPaths, compiledObjects);
+        if (!flattenObjectTree(children.at(i), objectIndex, depth + 1, meshIndices, meshPaths, compiledObjects, error)) {
+            return false;
+        }
     }
+
+    return true;
 }
 
 std::vector<std::uint8_t> buildStringTable(std::map<std::string, int>& stringOffsets) {
@@ -195,6 +206,13 @@ bool encodeBinaryScriptConfig(
     case DummyScript::kScriptId:
         writeU8(out, script.get("enabled").asBool(true) ? 1 : 0);
         return true;
+    case PlayerMoveScript::kScriptId: {
+        const std::vector<double> unitsPerSecond = readVec3(script.get("unitsPerSecond"), {1.0, 1.0, 0.0});
+        writeF32(out, static_cast<float>(unitsPerSecond[0]));
+        writeF32(out, static_cast<float>(unitsPerSecond[1]));
+        writeF32(out, static_cast<float>(unitsPerSecond[2]));
+        return true;
+    }
     default:
         return false;
     }
@@ -214,9 +232,13 @@ bool writeSceneHeader(
     std::vector<CompiledObject> compiledObjects;
     std::vector<std::string> meshPaths;
     std::map<std::string, int> meshIndices;
+    std::string hierarchyError;
 
     for (size_t i = 0; i < objects.size(); ++i) {
-        flattenObjectTree(objects.at(i), -1, meshIndices, meshPaths, compiledObjects);
+        if (!flattenObjectTree(objects.at(i), -1, 0, meshIndices, meshPaths, compiledObjects, hierarchyError)) {
+            std::cerr << hierarchyError << "\n";
+            return false;
+        }
     }
 
     std::map<std::string, int> stringOffsets;

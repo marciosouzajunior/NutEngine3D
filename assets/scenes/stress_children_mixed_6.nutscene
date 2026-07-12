@@ -1,0 +1,66 @@
+{
+  "name": "StressChildrenMixed6",
+  "camera": {
+    "position": [0, 0, -12],
+    "rotation": [0, 0, 0],
+    "fov": 60
+  },
+  "objects": [
+    {
+      "name": "MixedPivot6",
+      "position": [0, 0, 0],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1],
+      "scripts": [
+        {
+          "type": "SpinScript",
+          "rotationSpeed": [0.28, 0.70, 0.0]
+        }
+      ],
+      "children": [
+        {
+          "name": "CubeA",
+          "mesh": "assets/models/cube.obj",
+          "position": [-4.8, 0, 0],
+          "rotation": [0, 0, 0],
+          "scale": [0.11, 0.11, 0.11]
+        },
+        {
+          "name": "SphereLeft",
+          "mesh": "assets/models/sphere.obj",
+          "position": [-2.8, 0, 0],
+          "rotation": [0, 0, 0],
+          "scale": [0.09, 0.09, 0.09]
+        },
+        {
+          "name": "CubeB",
+          "mesh": "assets/models/cube.obj",
+          "position": [-0.9, 0, 0],
+          "rotation": [0, 0, 0],
+          "scale": [0.11, 0.11, 0.11]
+        },
+        {
+          "name": "CubeC",
+          "mesh": "assets/models/cube.obj",
+          "position": [0.9, 0, 0],
+          "rotation": [0, 0, 0],
+          "scale": [0.11, 0.11, 0.11]
+        },
+        {
+          "name": "SphereRight",
+          "mesh": "assets/models/sphere.obj",
+          "position": [2.8, 0, 0],
+          "rotation": [0, 0, 0],
+          "scale": [0.09, 0.09, 0.09]
+        },
+        {
+          "name": "CubeD",
+          "mesh": "assets/models/cube.obj",
+          "position": [4.8, 0, 0],
+          "rotation": [0, 0, 0],
+          "scale": [0.11, 0.11, 0.11]
+        }
+      ]
+    }
+  ]
+}

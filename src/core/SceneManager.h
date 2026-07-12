@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Scene.h"
-#include <string>
+#include <stdint.h>
 #include <map>
 
 namespace nut {
@@ -10,19 +10,19 @@ namespace nut {
 // Game code decides when to change scenes; the manager performs the lifecycle calls.
 class SceneManager {
 private:
-    std::map<std::string, Scene*> m_scenes;
+    std::map<uint16_t, Scene*> m_scenes;
     Scene* m_activeScene;
     Scene* m_pendingScene;
 
 public:
     SceneManager();
 
-    // Registers a scene using a readable name, like "Menu", "Level1", or "GameOver".
+    // Registers a scene using a compact numeric id.
     // The manager does not own the scene memory; whoever creates the scene must keep it alive.
-    void registerScene(const std::string& name, Scene* scene);
+    void registerScene(uint16_t id, Scene* scene);
 
-    // Requests a scene change. If the name exists, the change happens at the end of the frame.
-    void changeScene(const std::string& name);
+    // Requests a scene change. If the id exists, the change happens at the end of the frame.
+    void changeScene(uint16_t id);
 
     // Called by the engine once before the main loop starts.
     void start();

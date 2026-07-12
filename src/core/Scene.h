@@ -2,12 +2,10 @@
 
 #include "Camera.h"
 #include "GameObject.h"
-#ifdef ARDUINO
-#include "FixedVector.h"
-#include "NanoRuntimeConfig.h"
-#else
+#include "InputState.h"
+#include <stdint.h>
+#ifndef ARDUINO
 #include <string>
-#include <vector>
 #endif
 
 namespace nut {
@@ -18,15 +16,9 @@ class SceneManager;
 // It owns the data being simulated and exposes lifecycle hooks to the engine.
 class Scene {
 protected:
-    // Protected means child classes can use these members, but outside code cannot.
-    // A custom scene should add root objects here and position this camera.
-#ifdef ARDUINO
-    FixedVector<GameObject*, NUT_MAX_ROOT_OBJECTS> m_rootObjects;
-#else
-    std::vector<GameObject*> m_rootObjects;
-#endif
     Camera m_camera;
     SceneManager* m_sceneManager;
+    InputState m_inputState;
 
 public:
     Scene();
@@ -51,9 +43,17 @@ public:
 
     // Scenes use this to ask the engine to switch to another registered scene.
     // The actual change happens after the current update finishes.
-#ifndef ARDUINO
-    void requestSceneChange(const std::string& sceneName);
+    void requestSceneChange(uint16_t sceneId);
 
+    void setInputState(const InputState& inputState) {
+        m_inputState = inputState;
+    }
+
+    const InputState& inputState() const {
+        return m_inputState;
+    }
+
+#ifndef ARDUINO
     // Finds a GameObject by name anywhere in this scene.
     // The search starts at root objects and walks through children recursively.
     GameObject* findObject(const std::string& objectName);
@@ -62,28 +62,22 @@ public:
 
     // Adds a root object to the scene.
     // Children do not need to be added here because the renderer walks them recursively.
-    void addObject(GameObject* obj) {
-        if (obj) {
-            obj->setScene(this);
-            m_rootObjects.push_back(obj);
-        }
-    }
+    virtual bool addObject(GameObject* obj) = 0;
 
     // Removes all root objects from the scene.
     // This does not delete objects; it only clears the list used by the renderer.
-    void clearObjects() {
-        for (GameObject* obj : m_rootObjects) {
-            if (obj) {
-                obj->setScene(nullptr);
-            }
-        }
+    virtual void clearObjects() = 0;
 
-        m_rootObjects.clear();
-    }
+    // Access root objects through a small abstract API so each target/runtime
+    // can choose its own storage strategy.
+    virtual size_t rootObjectCount() const = 0;
+    virtual GameObject* rootObjectAt(size_t index) = 0;
+    virtual const GameObject* rootObjectAt(size_t index) const = 0;
 
     // Starts scripts attached to all root objects and their children.
     void startObjects() {
-        for (GameObject* obj : m_rootObjects) {
+        for (size_t i = 0; i < rootObjectCount(); ++i) {
+            GameObject* obj = rootObjectAt(i);
             if (obj) {
                 obj->startScripts();
             }
@@ -92,7 +86,8 @@ public:
 
     // Updates scripts attached to all root objects and their children.
     void updateObjects(float deltaTime) {
-        for (GameObject* obj : m_rootObjects) {
+        for (size_t i = 0; i < rootObjectCount(); ++i) {
+            GameObject* obj = rootObjectAt(i);
             if (obj) {
                 obj->updateScripts(deltaTime);
             }
@@ -102,25 +97,6 @@ public:
     Camera& camera() {
         return m_camera;
     }
-
-    // The renderer starts from these root objects and traverses the scene graph.
-#ifdef ARDUINO
-    FixedVector<GameObject*, NUT_MAX_ROOT_OBJECTS>& rootObjects() {
-        return m_rootObjects;
-    }
-
-    const FixedVector<GameObject*, NUT_MAX_ROOT_OBJECTS>& rootObjects() const {
-        return m_rootObjects;
-    }
-#else
-    std::vector<GameObject*>& rootObjects() {
-        return m_rootObjects;
-    }
-
-    const std::vector<GameObject*>& rootObjects() const {
-        return m_rootObjects;
-    }
-#endif
 
     const Camera& camera() const {
         return m_camera;

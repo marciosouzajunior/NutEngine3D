@@ -11,15 +11,20 @@ void Scene::setSceneManager(SceneManager* sceneManager) {
     m_sceneManager = sceneManager;
 }
 
+void Scene::requestSceneChange(uint16_t sceneId) {
 #ifndef ARDUINO
-void Scene::requestSceneChange(const std::string& sceneName) {
     if (m_sceneManager) {
-        m_sceneManager->changeScene(sceneName);
+        m_sceneManager->changeScene(sceneId);
     }
+#else
+    (void)sceneId;
+#endif
 }
 
+#ifndef ARDUINO
 GameObject* Scene::findObject(const std::string& objectName) {
-    for (GameObject* obj : m_rootObjects) {
+    for (size_t i = 0; i < rootObjectCount(); ++i) {
+        GameObject* obj = rootObjectAt(i);
         GameObject* found = findObjectInTree(obj, objectName);
         if (found) {
             return found;
@@ -30,7 +35,8 @@ GameObject* Scene::findObject(const std::string& objectName) {
 }
 
 const GameObject* Scene::findObject(const std::string& objectName) const {
-    for (const GameObject* obj : m_rootObjects) {
+    for (size_t i = 0; i < rootObjectCount(); ++i) {
+        const GameObject* obj = rootObjectAt(i);
         const GameObject* found = findObjectInTree(obj, objectName);
         if (found) {
             return found;
@@ -49,7 +55,8 @@ GameObject* Scene::findObjectInTree(GameObject* obj, const std::string& objectNa
         return obj;
     }
 
-    for (GameObject* child : obj->children) {
+    for (size_t i = 0; i < obj->childObjectCount(); ++i) {
+        GameObject* child = obj->childObjectAt(i);
         GameObject* found = findObjectInTree(child, objectName);
         if (found) {
             return found;
@@ -68,7 +75,8 @@ const GameObject* Scene::findObjectInTree(const GameObject* obj, const std::stri
         return obj;
     }
 
-    for (const GameObject* child : obj->children) {
+    for (size_t i = 0; i < obj->childObjectCount(); ++i) {
+        const GameObject* child = obj->childObjectAt(i);
         const GameObject* found = findObjectInTree(child, objectName);
         if (found) {
             return found;

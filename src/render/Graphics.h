@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../core/InputState.h"
+
 namespace nut {
 
 // Graphics is the narrow "draw lines on a 2D surface" contract used by the engine.
@@ -44,6 +46,9 @@ public:
 
     // Elapsed time in seconds since the previous frame.
     virtual float deltaTime() const = 0;
+
+    // Sample the current user input state for this frame.
+    virtual InputState sampleInput() const = 0;
 };
 
 } // namespace nut
