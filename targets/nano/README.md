@@ -55,58 +55,21 @@ The current adapter targets the same display as `NuTetris`:
 The current adapter uses a paged `128x64` framebuffer model and a tuned I2C clock
 for the validated Nano setup.
 
-## Stress workflow
+## Runtime profiles
 
-The normal `nano` environment keeps the stabilized baseline limits.
+The PlatformIO project keeps one environment per maintained scene:
 
-Use `nano_stress` when you want to probe larger object/child budgets without
-changing the baseline firmware configuration. That environment raises selected
-fixed-size runtime limits through build flags so you can map the real hardware
-budget more safely.
+- `nano`: rotating cube-and-sphere demo, 1453 bytes RAM (70.9%).
+- `nano_tunnel_run`: playable four-object scene, 1610 bytes RAM (78.6%).
 
-### Measured gameplay budget
+These measurements come from clean builds on the validated Nano/SSD1306 setup.
+Use the matching generated scene header and environment so fixed capacities
+reflect the content being shipped.
 
-Current real-hardware results on the validated Nano/SSD1306 setup:
-
-| Scenario | Visible objects | Meshes | Scripts | RAM | Result |
-| --- | ---: | ---: | ---: | ---: | --- |
-| Demo | 2 | 2 | 3 | 1532 B (74.8%) | Smooth and stable |
-| Stress 5 | 5 cubes | 1 shared | 1 | 1656 B (80.9%) | Acceptable |
-| Stress 5 + scripts | 5 cubes | 1 shared | 3 | 1708 B (83.4%) | Runs, not smooth |
-| Stress 4 + scripts | 4 cubes | 1 shared | 3 | 1586 B (77.4%) | Acceptable |
-| Mixed geometry | 2 cubes + 2 spheres | 2 | 3 | 1604 B (78.3%) | Acceptable |
-| Geometry upper test | 4 spheres | 1 shared | 3 | 1604 B (78.3%) | Acceptable |
-
-For game design, treat four simple visible objects plus about three active
-script instances as the current recommended budget. Five visible objects are a
-tested upper bound. Objects without meshes mainly cost RAM; each visible mesh
-instance repeats vertex/edge rendering and mainly costs CPU.
-
-The comfortable measured geometry range is about 48-84 rendered edges per
-frame. Four low-poly spheres, totaling 48 projected vertices and about 120
-edges, are still acceptable and currently define the tested upper geometry
-budget.
-
-A denser benchmark with 60 projected vertices and about 146 edges also runs at
-1604 B RAM (78.3%), but animation is noticeably strained. Treat this as a
-conditional limit for slow-paced scenes, not the normal gameplay budget.
-
-An integer page-local line-clipping experiment made this dense test slightly
-faster, but it was removed because restarting Bresenham at rounded endpoints
-left gaps in diagonal edges between OLED pages. Reusing parent rotation
-calculations for children with zero local rotation remains enabled and stable,
-although its visual gain was not conclusive. The 146-edge case still is not the
-recommended game budget.
-
-### Remaining validation
-
-The next tests should isolate object count, vertex count, edge count, active
-scripts, and script-property bytes instead of increasing them together. We also
-still need a long-running stability test with continuous joystick input, stack
-headroom measurements at each render stage, exact over-limit loader tests, and a
-small gameplay prototype that includes input plus collision-like work. Until
-those are complete, use the measured table as practical guidance rather than a
-guaranteed maximum.
+Historical performance findings and rejected optimizations are retained in the
+root `AGENTS.md` engineering guide. Temporary benchmark scenes and PlatformIO
+environments are not kept in the main project after their conclusions have
+been incorporated there.
 
 ## Compile notes
 

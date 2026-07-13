@@ -39,7 +39,7 @@ The generic scene helper lets you replace the Nano scene header with any
 authored scene:
 
 ```bat
-tools\scene_compiler\run_scene.bat assets\scenes\stress_objects_4.nutscene
+tools\scene_compiler\run_scene.bat assets\scenes\tunnel_run.nutscene
 ```
 
 ## Nano hierarchy rule

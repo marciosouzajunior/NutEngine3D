@@ -1,48 +1,56 @@
 {
-  "name": "S4",
+  "name": "TunnelRun",
   "camera": {
-    "position": [0, 0, -11],
-    "rotation": [0, 0, 0],
+    "position": [0, 4.8, -7],
+    "rotation": [0.42, 0, 0],
     "fov": 60
   },
   "objects": [
     {
-      "name": "P",
+      "name": "Game",
       "position": [0, 0, 0],
       "rotation": [0, 0, 0],
       "scale": [1, 1, 1],
       "scripts": [
         {
-          "type": "SpinScript",
-          "rotationSpeed": [0.35, 0.90, 0.0]
+          "type": "TunnelRunScript",
+          "baseSpeed": 2.4,
+          "speedStep": 0.12,
+          "collisionRadius": 1.25
         }
       ],
       "children": [
         {
+          "name": "Player",
+          "mesh": "assets/models/cube.obj",
+          "position": [0, 0, 0],
+          "rotation": [0, 0, 0],
+          "scale": [0.11, 0.11, 0.11],
+          "scripts": [
+            {
+              "type": "PlayerMoveScript",
+              "unitsPerSecond": [4.8, 0, 0]
+            }
+          ]
+        },
+        {
           "name": "A",
           "mesh": "assets/models/cube.obj",
-          "position": [-3.2, 0, 0],
+          "position": [-4, 0, 8],
           "rotation": [0, 0, 0],
           "scale": [0.14, 0.14, 0.14]
         },
         {
           "name": "B",
           "mesh": "assets/models/cube.obj",
-          "position": [-1.1, 0, 0],
+          "position": [0, 0, 16],
           "rotation": [0, 0, 0],
           "scale": [0.14, 0.14, 0.14]
         },
         {
           "name": "C",
           "mesh": "assets/models/cube.obj",
-          "position": [1.1, 0, 0],
-          "rotation": [0, 0, 0],
-          "scale": [0.14, 0.14, 0.14]
-        },
-        {
-          "name": "D",
-          "mesh": "assets/models/cube.obj",
-          "position": [3.2, 0, 0],
+          "position": [4, 0, 24],
           "rotation": [0, 0, 0],
           "scale": [0.14, 0.14, 0.14]
         }

@@ -22,9 +22,9 @@ public:
 #ifdef ARDUINO
     // Temporary storage supplied by the Nano target. It can be reused after
     // load() returns because only the decoded string table remains persistent.
-    // Fits the largest currently configured Nano environment (stress4). If a
-    // future NUT_CFG_* limit needs more, SceneBinaryLoader.cpp fails at compile
-    // time instead of allowing a runtime overflow.
+    // Each Nano environment sizes this block for its scene limits. If a future
+    // NUT_CFG_* limit needs more, SceneBinaryLoader.cpp fails at compile time
+    // instead of allowing a runtime overflow.
 #ifndef NUT_CFG_SCENE_LOADER_SCRATCH_BYTES
 #define NUT_CFG_SCENE_LOADER_SCRATCH_BYTES 264
 #endif

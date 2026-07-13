@@ -20,7 +20,7 @@ Treat SRAM, not flash, as the first constraint. Flash usually has useful room;
 SRAM must hold globals, fixed containers, library state,
 serial buffers, the active display page, and the live stack.
 
-The stable four-child stress build originally measured:
+An early four-child benchmark originally measured:
 
 - RAM: 1758/2048 bytes (85.8%)
 - flash: 17168/30720 bytes (55.9%)
@@ -29,16 +29,15 @@ This is already a tight SRAM budget. The remaining 290 bytes are not freely
 available: stack depth and temporary values need part of that margin. A build
 that links successfully can still corrupt memory or reboot on hardware.
 
-After sharing the scene-loader scratch with the renderer caches, and including
-the per-frame joystick input state, the current builds measure:
+After sharing the scene-loader scratch with the renderer caches and separating
+scene-specific capacity profiles, the maintained builds measure:
 
-- `nano`: 1532/2048 bytes RAM (74.8%)
-- `nano_stress`: 1464/2048 bytes RAM (71.5%)
-- `nano_stress4`: 1534/2048 bytes RAM (74.9%)
-- `nano_stress4_logs`: 1538/2048 bytes RAM (75.1%)
+- `nano` visual demo: 1453/2048 bytes RAM (70.9%)
+- `nano_tunnel_run`: 1610/2048 bytes RAM (78.6%)
 
-The loader/renderer optimization recovered 224 bytes in `nano_stress4` relative
-to the previous 1758-byte build. Treat these as the new reference numbers.
+The loader/renderer optimization recovered more than 200 bytes in the original
+four-object benchmark. Treat the maintained scene builds above as the current
+reference numbers.
 
 ## Memory rules
 
@@ -67,7 +66,7 @@ to the previous 1758-byte build. Treat these as the new reference numbers.
 If a new feature needs persistent memory, first state its byte cost at maximum
 capacity. If the cost is not known, measure it before merging the design.
 
-An A/B build of `nano_stress4` originally confirmed why the custom global
+An A/B build of the historical four-object benchmark confirmed why the custom global
 operators must remain in the Nano build:
 
 - with custom `new/delete`: 1758 bytes RAM, 17168 bytes flash
@@ -126,7 +125,7 @@ Earlier instrumentation at 700 kHz measured approximately:
 - frame preparation: about 13 ms
 - line drawing across pages: about 34-42 ms depending on orientation
 - OLED transmission: about 29.5 ms
-- total frame: about 77-86 ms in the measured demo/stress conditions
+- total frame: about 77-86 ms in the measured demo/benchmark conditions
 
 These are reference measurements, not guarantees. Geometry, clipping, logs,
 and instrumentation change them. Present time is a major fixed cost; simplifying
@@ -164,10 +163,10 @@ Runtime capacities come from `src/core/RuntimeLimits.h` and can be overridden
 per PlatformIO environment with `NUT_CFG_*` build flags. Limits are contracts,
 not goals. Raise only the capacities required by the scene being tested.
 
-Current real-hardware observations:
+Historical real-hardware benchmark observations:
 
 - the normal demo is stable and acceptably fluid
-- three rotating child cubes are smooth enough for the stress test
+- three rotating child cubes are smooth enough for the measured benchmark
 - four rotating child cubes work but are visibly slower
 - four visible cubes with three scripts (Spin, PlayerMove, and Dummy) plus
   joystick input are acceptable at 1586 bytes RAM (77.4%)
@@ -223,7 +222,7 @@ Input is sampled once per logical frame before script updates. The current Nano
 path reads joystick X/Y axes and one pull-up button into the compact `InputState`
 stored by `Scene`. Do not read hardware independently from each script or once
 per OLED page. New controls should extend the snapshot compactly and their RAM,
-ADC time, and per-frame CPU cost must be included in stress measurements.
+ADC time, and per-frame CPU cost must be included in benchmark measurements.
 
 ## Scripts
 
@@ -255,7 +254,7 @@ previously moved failures or made the LCD stop working.
 Follow these rules:
 
 1. Keep the normal firmware quiet. Put heavy diagnostics behind a dedicated
-   build flag/environment such as `NUT_ENABLE_STRESS_LOGS`.
+   temporary build flag/environment such as `NUT_ENABLE_PERF_LOGS`.
 2. Store constant log strings in flash with `F("...")` on Arduino.
 3. Prefer short stage markers (`T0`, `P1`) while locating a crash. Expand only
    the last confirmed interval.
@@ -310,8 +309,8 @@ display, wiring, scene header, and PlatformIO environment.
   state, containers, libraries, scripts, or renderer caches.
 - Validate meaningful runtime changes on the physical LCD, not only by build
   success or serial logs.
-- Preserve a known-good baseline environment while using separate stress
-  environments for limit exploration.
+- Preserve a known-good baseline environment. Create benchmark environments
+  only while exploring a limit, then remove them after recording conclusions.
 - Desktop simulation should use the same scene format, script model, transforms,
   and behavioral contracts where practical, but desktop-only convenience must
   stay out of the Nano binary.
@@ -322,8 +321,8 @@ The current numbers are useful design guidance, not a complete capacity model.
 Before declaring final game limits, run controlled tests that vary one cost at a
 time and record firmware tag, RAM, flash, frame time, visual quality, and resets:
 
-1. Soak the normal demo and the recommended four-object/three-script scene for
-   at least 30 minutes with continuous joystick input.
+1. Soak the normal demo and `nano_tunnel_run` for at least 30 minutes with
+   continuous joystick input and repeated game-over/restart cycles.
 2. Measure stack headroom at scene load, script update, frame preparation, page
    drawing, and I2C presentation without leaving heavy instrumentation enabled.
 3. Sweep object count using one tiny shared mesh so object/runtime cost is
@@ -336,8 +335,8 @@ time and record firmware tag, RAM, flash, frame time, visual quality, and resets
    verify that input does not introduce visible frame pacing changes.
 7. Test scene-load rejection exactly at and one item beyond every configured
    object, mesh, script, child, string-table, and loader-scratch limit.
-8. Add a minimal collision/input/gameplay prototype before reserving a physics
-   budget. Rendering-only benchmarks cannot prove that a complete game fits.
+8. Measure Tunnel Run's collision/input cost before reserving a larger physics
+   budget. One simple collision loop does not prove that general physics fits.
 9. Re-run the recommended scene at 400 kHz I2C as a compatibility baseline and
    keep 700 kHz documented as validated for the current display and wiring.
 10. Validate desktop simulation against the same generated scene after loader,

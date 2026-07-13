@@ -1,58 +1,46 @@
 {
-  "name": "TunnelRun",
+  "name": "Demo",
   "camera": {
-    "position": [0, 4.8, -7],
-    "rotation": [0.42, 0, 0],
+    "position": [0, 0, -8],
+    "rotation": [0, 0, 0],
     "fov": 60
   },
   "objects": [
     {
-      "name": "Game",
+      "name": "OrbitPivot",
       "position": [0, 0, 0],
       "rotation": [0, 0, 0],
       "scale": [1, 1, 1],
       "scripts": [
         {
-          "type": "TunnelRunScript",
-          "baseSpeed": 2.4,
-          "speedStep": 0.12,
-          "collisionRadius": 1.25
+          "type": "SpinScript",
+          "rotationSpeed": [0.75, 1.50, 0]
+        },
+        {
+          "type": "PlayerMoveScript",
+          "unitsPerSecond": [2.50, 2.50, 1.25]
         }
       ],
       "children": [
         {
-          "name": "Player",
+          "name": "CenterCube",
           "mesh": "assets/models/cube.obj",
           "position": [0, 0, 0],
           "rotation": [0, 0, 0],
-          "scale": [0.11, 0.11, 0.11],
+          "scale": [0.20, 0.20, 0.20]
+        },
+        {
+          "name": "OrbitingSphere",
+          "mesh": "assets/models/sphere.obj",
+          "position": [4.0, 0, 0],
+          "rotation": [0, 0, 0],
+          "scale": [0.12, 0.12, 0.12],
           "scripts": [
             {
-              "type": "PlayerMoveScript",
-              "unitsPerSecond": [4.8, 0, 0]
+              "type": "SpinScript",
+              "rotationSpeed": [0.35, 0.15, 0.60]
             }
           ]
-        },
-        {
-          "name": "A",
-          "mesh": "assets/models/cube.obj",
-          "position": [-4, 0, 8],
-          "rotation": [0, 0, 0],
-          "scale": [0.14, 0.14, 0.14]
-        },
-        {
-          "name": "B",
-          "mesh": "assets/models/cube.obj",
-          "position": [0, 0, 16],
-          "rotation": [0, 0, 0],
-          "scale": [0.14, 0.14, 0.14]
-        },
-        {
-          "name": "C",
-          "mesh": "assets/models/cube.obj",
-          "position": [4, 0, 24],
-          "rotation": [0, 0, 0],
-          "scale": [0.14, 0.14, 0.14]
         }
       ]
     }
