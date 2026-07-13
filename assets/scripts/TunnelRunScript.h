@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 namespace nut {
-class GameObject;
+class RuntimeScene;
 struct InputState;
 
 namespace game {
@@ -17,7 +17,7 @@ struct TunnelRunScript {
 
     static void update(
         CompiledScriptInstance& instance,
-        GameObject& object,
+        RuntimeScene& scene,
         const InputState& input,
         float deltaTime
     );

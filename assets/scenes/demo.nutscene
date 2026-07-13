@@ -1,45 +1,104 @@
 {
-  "name": "Demo",
   "camera": {
-    "position": [0, 0, -8],
-    "rotation": [0, 0, 0],
-    "fov": 60
+    "fov": 60,
+    "position": [
+      0,
+      0,
+      -8
+    ],
+    "rotation": [
+      0,
+      0,
+      0
+    ]
   },
+  "name": "Demo",
   "objects": [
     {
+      "children": [
+        {
+          "children": [],
+          "mesh": "assets/models/cube.obj",
+          "name": "CenterCube",
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            0.2,
+            0.2,
+            0.2
+          ],
+          "scripts": []
+        },
+        {
+          "children": [],
+          "mesh": "assets/models/sphere.obj",
+          "name": "OrbitingSphere",
+          "position": [
+            4,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            0.12,
+            0.12,
+            0.12
+          ],
+          "scripts": [
+            {
+              "rotationSpeed": [
+                0.35,
+                0.15,
+                0.6
+              ],
+              "type": "SpinScript"
+            }
+          ]
+        }
+      ],
       "name": "OrbitPivot",
-      "position": [0, 0, 0],
-      "rotation": [0, 0, 0],
-      "scale": [1, 1, 1],
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
       "scripts": [
         {
-          "type": "SpinScript",
-          "rotationSpeed": [0.75, 1.50, 0]
+          "rotationSpeed": [
+            0.75,
+            1.5,
+            0
+          ],
+          "type": "SpinScript"
         },
         {
           "type": "PlayerMoveScript",
-          "unitsPerSecond": [2.50, 2.50, 1.25]
-        }
-      ],
-      "children": [
-        {
-          "name": "CenterCube",
-          "mesh": "assets/models/cube.obj",
-          "position": [0, 0, 0],
-          "rotation": [0, 0, 0],
-          "scale": [0.20, 0.20, 0.20]
-        },
-        {
-          "name": "OrbitingSphere",
-          "mesh": "assets/models/sphere.obj",
-          "position": [4.0, 0, 0],
-          "rotation": [0, 0, 0],
-          "scale": [0.12, 0.12, 0.12],
-          "scripts": [
-            {
-              "type": "SpinScript",
-              "rotationSpeed": [0.35, 0.15, 0.60]
-            }
+          "unitsPerSecond": [
+            2.5,
+            2.5,
+            1.25
           ]
         }
       ]

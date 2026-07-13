@@ -125,11 +125,14 @@ Example:
 The scene file is the thing you edit, but the runtime path is compiled:
 
 1. The user edits `assets/scenes/*.nutscene`.
-2. `tools/scene_compiler` reads that JSON scene.
-3. The compiler resolves mesh references, hierarchy, transforms, script ids, and script config.
-4. The compiler emits a generated header such as `build/assets/nano/demo_scene.h`.
-5. The Nano firmware and desktop simulator both include that generated header.
-6. `SceneBinaryLoader` reconstructs the runtime scene from the compiled binary blob.
+2. `tools/scene_compiler` or `tools/scene_editor` reads that JSON scene.
+3. The shared compiler pipeline resolves mesh references, hierarchy, transforms, script ids, and script config.
+4. The pipeline emits generated headers such as:
+   - `build/assets/nano/demo_scene.h`
+   - `build/assets/nano/demo_scene_limits.h`
+5. The Nano firmware and desktop simulator both include the compiled scene header.
+6. The Nano target consumes the generated limits header before the shared runtime defaults.
+7. `SceneBinaryLoader` reconstructs the runtime scene from the compiled binary blob.
 
 So in practice there are two formats:
 
@@ -215,6 +218,16 @@ On Windows there are also:
 The editor lives in `tools/scene_editor/`.
 
 It edits the authored `.nutscene` source, not the compiled header. That keeps the authoring side readable while the runtime stays compact.
+
+The current editor workflow is:
+
+1. select `demo.nutscene` or `tunnel_run.nutscene`
+2. save the authored scene JSON
+3. compile the active scene into the generated Nano headers
+4. build/upload the Nano firmware or run the desktop simulator
+
+The selected scene plus local build settings are stored in
+`tools/scene_editor/editor_user_settings.json`, which is ignored from git.
 
 ## Notes On Performance
 

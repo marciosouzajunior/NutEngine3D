@@ -26,6 +26,9 @@ class Scene;
 class GameObject {
 private:
 #ifdef ARDUINO
+    // Non-owning pointer into SceneBinaryLoader's persistent string table.
+    // Keeping only this 2-byte AVR pointer avoids one buffer/allocation per
+    // object. The loader-owned table must outlive every object in the scene.
     const char* m_name;
 #else
     std::string m_name;

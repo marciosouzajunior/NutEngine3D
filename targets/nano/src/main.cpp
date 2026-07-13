@@ -1,4 +1,5 @@
-#include "NutNanoGraphics.h"
+#include "../../../build/assets/nano/demo_scene_limits.h"
+#include "NanoGraphics.h"
 #include "NanoWireframeRenderer.h"
 
 #include "../../../build/assets/nano/demo_scene.h"
@@ -38,8 +39,8 @@ constexpr const char* kFirmwareVersion = "nano-fw-2026-07-12-" NUT_FW_TAG;
 #define NUT_JOYSTICK_X_DIRECTION -1.0f
 #endif
 
-NutNanoDisplayAdapter g_display;
-NutNanoGraphics g_graphics(&g_display);
+NanoDisplayAdapter g_display;
+NanoGraphics g_graphics(&g_display);
 nut::RuntimeScene g_scene;
 bool g_ready = false;
 

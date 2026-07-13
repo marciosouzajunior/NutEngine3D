@@ -9,7 +9,7 @@ constexpr int NUT_OLED_PHYSICAL_HEIGHT = 64;
 constexpr int NUT_OLED_PAGE_HEIGHT = 8;
 constexpr int NUT_OLED_PAGE_COUNT = NUT_OLED_PHYSICAL_HEIGHT / NUT_OLED_PAGE_HEIGHT;
 
-// NutNanoDisplayAdapter is the lowest rendering layer in the Nano target.
+// NanoDisplayAdapter is the lowest rendering layer in the Nano target.
 //
 // Pipeline role:
 // - maintain one temporary 128-byte page buffer in RAM
@@ -19,7 +19,7 @@ constexpr int NUT_OLED_PAGE_COUNT = NUT_OLED_PHYSICAL_HEIGHT / NUT_OLED_PAGE_HEI
 // This is the final step before pixels appear on the OLED. It no longer knows
 // anything about scenes, cameras, meshes, or projection; it only knows how to
 // write bits into the current display page and flush them to hardware.
-class NutNanoDisplayAdapter {
+class NanoDisplayAdapter {
 private:
     uint8_t m_pageBuffer[NUT_OLED_PHYSICAL_WIDTH];
     uint8_t m_currentPage;
@@ -53,7 +53,7 @@ private:
     }
 
 public:
-    NutNanoDisplayAdapter()
+    NanoDisplayAdapter()
         : m_pageBuffer(), m_currentPage(0), m_ready(false) {}
 
     // Bring the SSD1306 into page-addressing mode and clear every page once.

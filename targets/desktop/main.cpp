@@ -25,7 +25,7 @@ int main() {
     // Render at the Nano OLED's native resolution and scale it for desktop viewing.
     const int screenWidth = 128;
     const int screenHeight = 64;
-    const int displayScale = 3;
+    const int displayScale = 2;
     nut::RaylibGraphics graphics(screenWidth, screenHeight, "NutEngine3D - Nano OLED Simulator (128x64)", displayScale);
 
     // 2. Create the renderer and engine.
