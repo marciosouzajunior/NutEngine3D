@@ -57,6 +57,9 @@ constexpr ImU32 ViewportGrid = IM_COL32(50, 57, 61, 255);
 constexpr ImU32 ViewportGridMajor = IM_COL32(76, 84, 90, 255);
 constexpr ImU32 ViewportWire = IM_COL32(220, 226, 234, 255);
 constexpr ImU32 AccentYellow = IM_COL32(246, 218, 102, 255);
+constexpr ImU32 AxisRed = IM_COL32(224, 86, 86, 255);
+constexpr ImU32 AxisGreen = IM_COL32(92, 190, 110, 255);
+constexpr ImU32 AxisBlue = IM_COL32(88, 150, 232, 255);
 } // namespace motif
 
 struct EditorLayout {
@@ -111,6 +114,8 @@ struct EditorSceneData {
     std::vector<std::string> buildOutputLines;
     EditorSelectionKind selectionKind = EditorSelectionKind::None;
     EditorObjectData* selectedObject = nullptr;
+    std::vector<EditorObjectData*> selectedObjects;
+    uint32_t selectionRevision = 0;
     bool loaded = false;
     bool dirty = false;
     bool hasSceneAnalysis = false;
@@ -122,6 +127,7 @@ struct EditorSceneData {
 struct InspectorState {
     EditorObjectData* syncedObject = nullptr;
     EditorSelectionKind syncedSelectionKind = EditorSelectionKind::None;
+    uint32_t syncedSelectionRevision = 0;
     char nameBuffer[256] = {};
     char positionBuffers[3][32] = {};
     char rotationBuffers[3][32] = {};
@@ -150,6 +156,53 @@ struct ViewportCameraState {
 struct ViewportDisplayState {
     bool showGroundGrid = true;
     bool showSceneCameraPreview = false;
+};
+
+enum class ViewportGizmoMode {
+    Move,
+    Rotate,
+    Scale
+};
+
+enum class ViewportTransformSpace {
+    Local,
+    Group
+};
+
+struct ViewportTransformGizmoState {
+    ViewportGizmoMode mode = ViewportGizmoMode::Move;
+    ViewportTransformSpace transformSpace = ViewportTransformSpace::Local;
+    EditorSelectionKind targetSelectionKind = EditorSelectionKind::None;
+    uint32_t targetSelectionRevision = 0;
+    bool active = false;
+    int axis = -1;
+    EditorObjectData* object = nullptr;
+    ImVec2 dragStartMouse = ImVec2(0.0f, 0.0f);
+    float dragStartPosition[3] = {0.0f, 0.0f, 0.0f};
+    float dragStartRotation[3] = {0.0f, 0.0f, 0.0f};
+    float dragStartScale[3] = {1.0f, 1.0f, 1.0f};
+    ImVec2 screenOrigin = ImVec2(0.0f, 0.0f);
+    ImVec2 screenEnd = ImVec2(0.0f, 0.0f);
+    float localAxisLength = 1.0f;
+    struct ObjectSnapshot {
+        EditorObjectData* object = nullptr;
+        float position[3] = {0.0f, 0.0f, 0.0f};
+        float rotation[3] = {0.0f, 0.0f, 0.0f};
+        float scale[3] = {1.0f, 1.0f, 1.0f};
+        nut::math::Vec3 worldPosition;
+        nut::math::Mat4 parentWorldMatrix;
+    };
+    std::vector<ObjectSnapshot> objectSnapshots;
+    nut::math::Vec3 groupPivotWorld;
+};
+
+struct ViewportTranslationGizmoInfo {
+    bool visible = false;
+    ImVec2 screenOrigin = ImVec2(0.0f, 0.0f);
+    bool axisVisible[3] = {false, false, false};
+    ImVec2 screenEnds[3];
+    nut::math::Vec3 axisDirections[3];
+    float axisLocalLengths[3] = {1.0f, 1.0f, 1.0f};
 };
 
 struct EditorUiActions {
@@ -353,6 +406,49 @@ void drawSceneCameraGizmo(
     ImVec2 canvasPos,
     ImVec2 canvasSize
 );
+bool tryFindObjectWorldMatrices(
+    const std::vector<std::unique_ptr<EditorObjectData>>& roots,
+    EditorObjectData* target,
+    const nut::math::Mat4& parentWorldMatrix,
+    nut::math::Mat4& outParentWorldMatrix,
+    nut::math::Mat4& outWorldMatrix
+);
+bool buildViewportTranslationGizmo(
+    const EditorSceneData& sceneData,
+    ViewportGizmoMode gizmoMode,
+    const ViewportCameraState& viewportCameraState,
+    const nut::math::Mat4& viewMatrix,
+    const nut::math::Mat4& projectionMatrix,
+    ImVec2 canvasPos,
+    ImVec2 canvasSize,
+    ViewportTranslationGizmoInfo& outGizmo
+);
+int pickViewportTranslationGizmoAxis(
+    const ViewportTranslationGizmoInfo& gizmo,
+    ImVec2 mousePos
+);
+void drawViewportTranslationGizmo(
+    ImDrawList* drawList,
+    const EditorSceneData& sceneData,
+    const ViewportTranslationGizmoInfo& gizmo,
+    const ViewportTransformGizmoState& gizmoState
+);
+void drawViewportScaleGizmo(
+    ImDrawList* drawList,
+    const ViewportTranslationGizmoInfo& gizmo,
+    const ViewportTransformGizmoState& gizmoState
+);
+void drawViewportRotationGizmo(
+    ImDrawList* drawList,
+    const ViewportTranslationGizmoInfo& gizmo,
+    const ViewportTransformGizmoState& gizmoState
+);
+void drawViewportTranslationArrowHead(
+    ImDrawList* drawList,
+    ImVec2 start,
+    ImVec2 end,
+    ImU32 color
+);
 void drawViewportSceneContents(
     ImDrawList* drawList,
     const EditorSceneData& sceneData,
@@ -384,6 +480,16 @@ nut::math::Mat4 buildViewportViewMatrix(const ViewportCameraState& viewportCamer
 void syncViewportCameraToScene(const EditorSceneData& sceneData, ViewportCameraState& viewportCameraState);
 float readFloat(const nut::Json& value, float defaultValue);
 void readVec3(const nut::Json& value, float outValues[3], const float defaults[3]);
+bool isObjectSelected(const EditorSceneData& sceneData, const EditorObjectData* object);
+void clearObjectSelection(EditorSceneData& sceneData);
+void selectSingleObject(EditorSceneData& sceneData, EditorObjectData* object);
+void toggleObjectSelection(EditorSceneData& sceneData, EditorObjectData* object);
+void selectSceneCamera(EditorSceneData& sceneData);
+void clearSelection(EditorSceneData& sceneData);
+nut::math::Mat4 invertAffineMatrix(const nut::math::Mat4& matrix);
+nut::math::Vec3 rotateVectorAroundAxis(const nut::math::Vec3& vector, const nut::math::Vec3& axisUnit, float radians);
+void markSceneDirty(EditorSceneData& sceneData);
+void syncInspectorTransformBuffers(InspectorState& inspectorState, const EditorSceneData& sceneData);
 void appendConsoleLine(EditorSceneData& sceneData, const std::string& line);
 void appendBuildOutputLine(EditorSceneData& sceneData, const std::string& line);
 std::string escapeJsonString(const std::string& value);
@@ -405,6 +511,29 @@ std::string sceneDisplayNameForPath(const std::string& scenePath) {
         }
     }
     return scenePath;
+}
+
+std::vector<std::string> availableEditorMeshPaths() {
+    namespace fs = std::filesystem;
+
+    std::vector<std::string> meshPaths;
+    const fs::path modelsDir = fs::path(toAbsoluteProjectPath("assets/models"));
+    if (!fs::exists(modelsDir) || !fs::is_directory(modelsDir)) {
+        return meshPaths;
+    }
+
+    for (const fs::directory_entry& entry : fs::directory_iterator(modelsDir)) {
+        if (!entry.is_regular_file()) {
+            continue;
+        }
+        if (entry.path().extension() != ".obj") {
+            continue;
+        }
+        meshPaths.push_back("assets/models/" + entry.path().filename().string());
+    }
+
+    std::sort(meshPaths.begin(), meshPaths.end());
+    return meshPaths;
 }
 
 bool isKnownEditorScenePath(const std::string& scenePath) {
@@ -1479,8 +1608,16 @@ bool loadSceneData(EditorSceneData& sceneData, const std::string& scenePathOnDis
     }
 
     sceneData.assetPaths.assign(uniqueAssets.begin(), uniqueAssets.end());
-    sceneData.selectedObject = findFirstObject(sceneData.roots);
-    sceneData.selectionKind = sceneData.selectedObject ? EditorSelectionKind::Object : EditorSelectionKind::SceneCamera;
+    sceneData.selectedObject = nullptr;
+    sceneData.selectedObjects.clear();
+    if (EditorObjectData* firstObject = findFirstObject(sceneData.roots)) {
+        sceneData.selectedObject = firstObject;
+        sceneData.selectedObjects.push_back(firstObject);
+        sceneData.selectionKind = EditorSelectionKind::Object;
+    } else {
+        sceneData.selectionKind = EditorSelectionKind::SceneCamera;
+    }
+    ++sceneData.selectionRevision;
     sceneData.loaded = true;
 
     appendConsoleLine(sceneData, "> Loaded scene: " + scenePathDisplay);
@@ -1900,9 +2037,7 @@ EditorUiActions drawToolbar(float menuHeight, const EditorSceneData& sceneData, 
 }
 
 void drawHierarchyNode(EditorObjectData& object, EditorSceneData& sceneData) {
-    const bool isSelected =
-        sceneData.selectionKind == EditorSelectionKind::Object &&
-        sceneData.selectedObject == &object;
+    const bool isSelected = isObjectSelected(sceneData, &object);
     ImGuiTreeNodeFlags flags =
         ImGuiTreeNodeFlags_OpenOnArrow |
         ImGuiTreeNodeFlags_OpenOnDoubleClick |
@@ -1916,8 +2051,12 @@ void drawHierarchyNode(EditorObjectData& object, EditorSceneData& sceneData) {
 
     bool isOpen = ImGui::TreeNodeEx(static_cast<void*>(&object), flags, "%s", object.name.c_str());
     if (ImGui::IsItemClicked()) {
-        sceneData.selectionKind = EditorSelectionKind::Object;
-        sceneData.selectedObject = &object;
+        const bool shiftPressed = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
+        if (shiftPressed) {
+            toggleObjectSelection(sceneData, &object);
+        } else {
+            selectSingleObject(sceneData, &object);
+        }
     }
 
     if (isOpen) {
@@ -1995,8 +2134,7 @@ EditorUiActions drawHierarchy(const EditorLayout& layout, bool forceLayout, Edit
         }
         ImGui::TreeNodeEx("SceneCamera", cameraFlags, "Scene Camera");
         if (ImGui::IsItemClicked()) {
-            sceneData.selectionKind = EditorSelectionKind::SceneCamera;
-            sceneData.selectedObject = nullptr;
+            selectSceneCamera(sceneData);
         }
 
         if (!sceneData.loaded) {
@@ -2012,8 +2150,10 @@ EditorUiActions drawHierarchy(const EditorLayout& layout, bool forceLayout, Edit
         if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
             ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
             !ImGui::IsAnyItemHovered()) {
-            sceneData.selectionKind = EditorSelectionKind::None;
-            sceneData.selectedObject = nullptr;
+            const bool shiftPressed = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
+            if (!shiftPressed) {
+                clearSelection(sceneData);
+            }
         }
     }
     ImGui::EndChild();
@@ -2033,6 +2173,135 @@ void refreshSceneObjectPaths(EditorSceneData& sceneData) {
     for (size_t rootIndex = 0; rootIndex < sceneData.roots.size(); ++rootIndex) {
         refreshObjectPathsRecursive(*sceneData.roots[rootIndex], "", rootIndex);
     }
+}
+
+bool isObjectSelected(const EditorSceneData& sceneData, const EditorObjectData* object) {
+    return std::find(
+        sceneData.selectedObjects.begin(),
+        sceneData.selectedObjects.end(),
+        object
+    ) != sceneData.selectedObjects.end();
+}
+
+void clearObjectSelection(EditorSceneData& sceneData) {
+    sceneData.selectedObjects.clear();
+    sceneData.selectedObject = nullptr;
+    sceneData.selectionKind = EditorSelectionKind::None;
+    ++sceneData.selectionRevision;
+}
+
+void selectSingleObject(EditorSceneData& sceneData, EditorObjectData* object) {
+    sceneData.selectedObjects.clear();
+    if (object != nullptr) {
+        sceneData.selectedObjects.push_back(object);
+        sceneData.selectedObject = object;
+        sceneData.selectionKind = EditorSelectionKind::Object;
+    } else {
+        sceneData.selectedObject = nullptr;
+        sceneData.selectionKind = EditorSelectionKind::None;
+    }
+    ++sceneData.selectionRevision;
+}
+
+void toggleObjectSelection(EditorSceneData& sceneData, EditorObjectData* object) {
+    if (object == nullptr) {
+        return;
+    }
+
+    sceneData.selectionKind = EditorSelectionKind::Object;
+    auto it = std::find(sceneData.selectedObjects.begin(), sceneData.selectedObjects.end(), object);
+    if (it != sceneData.selectedObjects.end()) {
+        sceneData.selectedObjects.erase(it);
+        if (sceneData.selectedObject == object) {
+            sceneData.selectedObject = sceneData.selectedObjects.empty()
+                ? nullptr
+                : sceneData.selectedObjects.back();
+        }
+        if (sceneData.selectedObjects.empty()) {
+            sceneData.selectionKind = EditorSelectionKind::None;
+        }
+    } else {
+        sceneData.selectedObjects.push_back(object);
+        sceneData.selectedObject = object;
+    }
+    ++sceneData.selectionRevision;
+}
+
+void selectSceneCamera(EditorSceneData& sceneData) {
+    sceneData.selectedObjects.clear();
+    sceneData.selectedObject = nullptr;
+    sceneData.selectionKind = EditorSelectionKind::SceneCamera;
+    ++sceneData.selectionRevision;
+}
+
+void clearSelection(EditorSceneData& sceneData) {
+    sceneData.selectedObjects.clear();
+    sceneData.selectedObject = nullptr;
+    sceneData.selectionKind = EditorSelectionKind::None;
+    ++sceneData.selectionRevision;
+}
+
+nut::math::Mat4 invertAffineMatrix(const nut::math::Mat4& matrix) {
+    const float a00 = matrix.m[0][0];
+    const float a01 = matrix.m[0][1];
+    const float a02 = matrix.m[0][2];
+    const float a10 = matrix.m[1][0];
+    const float a11 = matrix.m[1][1];
+    const float a12 = matrix.m[1][2];
+    const float a20 = matrix.m[2][0];
+    const float a21 = matrix.m[2][1];
+    const float a22 = matrix.m[2][2];
+    const float tx = matrix.m[0][3];
+    const float ty = matrix.m[1][3];
+    const float tz = matrix.m[2][3];
+
+    const float det =
+        a00 * (a11 * a22 - a12 * a21) -
+        a01 * (a10 * a22 - a12 * a20) +
+        a02 * (a10 * a21 - a11 * a20);
+
+    nut::math::Mat4 inverse;
+    if (std::fabs(det) < 0.000001f) {
+        return inverse;
+    }
+
+    const float invDet = 1.0f / det;
+    inverse.m[0][0] = (a11 * a22 - a12 * a21) * invDet;
+    inverse.m[0][1] = (a02 * a21 - a01 * a22) * invDet;
+    inverse.m[0][2] = (a01 * a12 - a02 * a11) * invDet;
+    inverse.m[1][0] = (a12 * a20 - a10 * a22) * invDet;
+    inverse.m[1][1] = (a00 * a22 - a02 * a20) * invDet;
+    inverse.m[1][2] = (a02 * a10 - a00 * a12) * invDet;
+    inverse.m[2][0] = (a10 * a21 - a11 * a20) * invDet;
+    inverse.m[2][1] = (a01 * a20 - a00 * a21) * invDet;
+    inverse.m[2][2] = (a00 * a11 - a01 * a10) * invDet;
+
+    inverse.m[0][3] = -(inverse.m[0][0] * tx + inverse.m[0][1] * ty + inverse.m[0][2] * tz);
+    inverse.m[1][3] = -(inverse.m[1][0] * tx + inverse.m[1][1] * ty + inverse.m[1][2] * tz);
+    inverse.m[2][3] = -(inverse.m[2][0] * tx + inverse.m[2][1] * ty + inverse.m[2][2] * tz);
+    inverse.m[3][0] = 0.0f;
+    inverse.m[3][1] = 0.0f;
+    inverse.m[3][2] = 0.0f;
+    inverse.m[3][3] = 1.0f;
+    return inverse;
+}
+
+nut::math::Vec3 rotateVectorAroundAxis(const nut::math::Vec3& vector, const nut::math::Vec3& axisUnit, float radians) {
+    const float c = std::cos(radians);
+    const float s = std::sin(radians);
+    const float dot =
+        vector.x * axisUnit.x +
+        vector.y * axisUnit.y +
+        vector.z * axisUnit.z;
+    const nut::math::Vec3 cross(
+        axisUnit.y * vector.z - axisUnit.z * vector.y,
+        axisUnit.z * vector.x - axisUnit.x * vector.z,
+        axisUnit.x * vector.y - axisUnit.y * vector.x
+    );
+
+    return vector * c +
+        cross * s +
+        axisUnit * (dot * (1.0f - c));
 }
 
 EditorObjectData* findParentObjectRecursive(EditorObjectData& candidateParent, EditorObjectData* target) {
@@ -2178,13 +2447,94 @@ void drawViewport(
     const EditorLayout& layout,
     bool forceLayout,
     EditorSceneData& sceneData,
+    InspectorState& inspectorState,
     ViewportCameraState& viewportCameraState,
-    ViewportDisplayState& viewportDisplayState
+    ViewportDisplayState& viewportDisplayState,
+    ViewportTransformGizmoState& viewportGizmoState
 ) {
     applyPanelLayout(layout.viewportPos, layout.viewportSize, forceLayout);
 
     ImGui::Begin("Viewport", nullptr, ImGuiWindowFlags_NoMove);
     const float controlsHeight = ImGui::GetFrameHeight();
+    const ImVec2 toolButtonSize(62.0f, 0.0f);
+    const bool sceneCameraSelected = sceneData.selectionKind == EditorSelectionKind::SceneCamera;
+    if (sceneCameraSelected && viewportGizmoState.mode == ViewportGizmoMode::Scale) {
+        viewportGizmoState.mode = ViewportGizmoMode::Move;
+    }
+    if (ImGui::Button("Move", toolButtonSize)) {
+        viewportGizmoState.mode = ViewportGizmoMode::Move;
+        viewportGizmoState.targetSelectionKind = EditorSelectionKind::None;
+        viewportGizmoState.targetSelectionRevision = 0;
+        viewportGizmoState.active = false;
+        viewportGizmoState.axis = -1;
+        viewportGizmoState.object = nullptr;
+        viewportGizmoState.objectSnapshots.clear();
+    }
+    if (viewportGizmoState.mode == ViewportGizmoMode::Move) {
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+        const ImVec2 min = ImGui::GetItemRectMin();
+        const ImVec2 max = ImGui::GetItemRectMax();
+        drawList->AddRect(min, max, motif::AccentYellow, 0.0f, 0, 1.0f);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Rotate", toolButtonSize)) {
+        viewportGizmoState.mode = ViewportGizmoMode::Rotate;
+        viewportGizmoState.transformSpace = ViewportTransformSpace::Group;
+        viewportGizmoState.targetSelectionKind = EditorSelectionKind::None;
+        viewportGizmoState.targetSelectionRevision = 0;
+        viewportGizmoState.active = false;
+        viewportGizmoState.axis = -1;
+        viewportGizmoState.object = nullptr;
+        viewportGizmoState.objectSnapshots.clear();
+    }
+    if (viewportGizmoState.mode == ViewportGizmoMode::Rotate) {
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+        const ImVec2 min = ImGui::GetItemRectMin();
+        const ImVec2 max = ImGui::GetItemRectMax();
+        drawList->AddRect(min, max, motif::AccentYellow, 0.0f, 0, 1.0f);
+    }
+    ImGui::SameLine();
+    if (sceneCameraSelected) {
+        ImGui::BeginDisabled();
+    }
+    if (ImGui::Button("Scale", toolButtonSize)) {
+        viewportGizmoState.mode = ViewportGizmoMode::Scale;
+        viewportGizmoState.transformSpace = ViewportTransformSpace::Group;
+        viewportGizmoState.targetSelectionKind = EditorSelectionKind::None;
+        viewportGizmoState.targetSelectionRevision = 0;
+        viewportGizmoState.active = false;
+        viewportGizmoState.axis = -1;
+        viewportGizmoState.object = nullptr;
+        viewportGizmoState.objectSnapshots.clear();
+    }
+    if (sceneCameraSelected) {
+        ImGui::EndDisabled();
+    }
+    if (viewportGizmoState.mode == ViewportGizmoMode::Scale) {
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+        const ImVec2 min = ImGui::GetItemRectMin();
+        const ImVec2 max = ImGui::GetItemRectMax();
+        drawList->AddRect(min, max, motif::AccentYellow, 0.0f, 0, 1.0f);
+    }
+    if (viewportGizmoState.mode == ViewportGizmoMode::Rotate ||
+        viewportGizmoState.mode == ViewportGizmoMode::Scale) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("Space");
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Local", viewportGizmoState.transformSpace == ViewportTransformSpace::Local)) {
+            viewportGizmoState.transformSpace = ViewportTransformSpace::Local;
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Group", viewportGizmoState.transformSpace == ViewportTransformSpace::Group)) {
+            viewportGizmoState.transformSpace = ViewportTransformSpace::Group;
+        }
+    }
+    ImGui::SameLine();
+    const float rightButtonsWidth = 72.0f + ImGui::GetStyle().ItemSpacing.x + 72.0f;
+    const float rightButtonsX = ImGui::GetWindowContentRegionMax().x - rightButtonsWidth;
+    if (ImGui::GetCursorPosX() < rightButtonsX) {
+        ImGui::SetCursorPosX(rightButtonsX);
+    }
     if (ImGui::Button("Reset", ImVec2(72.0f, 0.0f))) {
         syncViewportCameraToScene(sceneData, viewportCameraState);
     }
@@ -2223,6 +2573,23 @@ void drawViewport(
         const bool viewportHovered =
             mouseInsideCanvas &&
             ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+        const float aspect = canvasSize.y > 0.0f ? (canvasSize.x / canvasSize.y) : 1.0f;
+        const nut::math::Mat4 viewMatrix = buildViewportViewMatrix(viewportCameraState);
+        const nut::math::Mat4 projectionMatrix =
+            nut::math::Mat4::makePerspective(nut::math::degToRad(viewportCameraState.fov), aspect, 0.02f, 100.0f);
+        const nut::math::Mat4 viewProjectionMatrix = projectionMatrix * viewMatrix;
+        const nut::math::Mat4 identityMatrix;
+        ViewportTranslationGizmoInfo translationGizmo;
+        const bool hasAxisGizmo = buildViewportTranslationGizmo(
+            sceneData,
+            viewportGizmoState.mode,
+            viewportCameraState,
+            viewMatrix,
+            projectionMatrix,
+            canvasPos,
+            canvasSize,
+            translationGizmo
+        );
 
         if (viewportHovered) {
             const float wheel = ImGui::GetIO().MouseWheel;
@@ -2246,6 +2613,78 @@ void drawViewport(
                     viewportCameraState.rotating = false;
                     viewportCameraState.dragCandidate = false;
                     viewportCameraState.dragging = false;
+                } else if (hasAxisGizmo) {
+                    const int gizmoAxis = pickViewportTranslationGizmoAxis(translationGizmo, mousePos);
+                    if (gizmoAxis >= 0 &&
+                        (sceneData.selectionKind == EditorSelectionKind::SceneCamera ||
+                         (sceneData.selectionKind == EditorSelectionKind::Object && sceneData.selectedObject != nullptr))) {
+                        viewportGizmoState.active = true;
+                        viewportGizmoState.targetSelectionKind = sceneData.selectionKind;
+                        viewportGizmoState.targetSelectionRevision = sceneData.selectionRevision;
+                        viewportGizmoState.axis = gizmoAxis;
+                        viewportGizmoState.object = sceneData.selectedObject;
+                        viewportGizmoState.dragStartMouse = mousePos;
+                        viewportGizmoState.screenOrigin = translationGizmo.screenOrigin;
+                        viewportGizmoState.screenEnd = translationGizmo.screenEnds[gizmoAxis];
+                        viewportGizmoState.localAxisLength = translationGizmo.axisLocalLengths[gizmoAxis];
+                        viewportGizmoState.objectSnapshots.clear();
+                        viewportGizmoState.groupPivotWorld = nut::math::Vec3(0.0f, 0.0f, 0.0f);
+                        for (int i = 0; i < 3; ++i) {
+                            if (sceneData.selectionKind == EditorSelectionKind::SceneCamera) {
+                                viewportGizmoState.dragStartPosition[i] = sceneData.camera.position[i];
+                                viewportGizmoState.dragStartRotation[i] = sceneData.camera.rotation[i];
+                                viewportGizmoState.dragStartScale[i] = 1.0f;
+                            } else {
+                                viewportGizmoState.dragStartPosition[i] = sceneData.selectedObject->position[i];
+                                viewportGizmoState.dragStartRotation[i] = sceneData.selectedObject->rotation[i];
+                                viewportGizmoState.dragStartScale[i] = sceneData.selectedObject->scale[i];
+                            }
+                        }
+                        if (sceneData.selectionKind == EditorSelectionKind::Object) {
+                            viewportGizmoState.objectSnapshots.reserve(sceneData.selectedObjects.size());
+                            nut::math::Vec3 pivotSum(0.0f, 0.0f, 0.0f);
+                            for (EditorObjectData* selected : sceneData.selectedObjects) {
+                                if (selected == nullptr) {
+                                    continue;
+                                }
+                                const nut::math::Mat4 identityMatrixForSelection;
+                                nut::math::Mat4 parentWorldMatrixForSelection;
+                                nut::math::Mat4 worldMatrixForSelection;
+                                if (!tryFindObjectWorldMatrices(
+                                        sceneData.roots,
+                                        selected,
+                                        identityMatrixForSelection,
+                                        parentWorldMatrixForSelection,
+                                        worldMatrixForSelection)) {
+                                    continue;
+                                }
+                                ViewportTransformGizmoState::ObjectSnapshot snapshot;
+                                snapshot.object = selected;
+                                for (int i = 0; i < 3; ++i) {
+                                    snapshot.position[i] = selected->position[i];
+                                    snapshot.rotation[i] = selected->rotation[i];
+                                    snapshot.scale[i] = selected->scale[i];
+                                }
+                                snapshot.parentWorldMatrix = parentWorldMatrixForSelection;
+                                snapshot.worldPosition = worldMatrixForSelection * nut::math::Vec3(0.0f, 0.0f, 0.0f);
+                                pivotSum += snapshot.worldPosition;
+                                viewportGizmoState.objectSnapshots.push_back(snapshot);
+                            }
+                            if (!viewportGizmoState.objectSnapshots.empty()) {
+                                viewportGizmoState.groupPivotWorld =
+                                    pivotSum * (1.0f / static_cast<float>(viewportGizmoState.objectSnapshots.size()));
+                            }
+                        }
+                        viewportCameraState.dragCandidate = false;
+                        viewportCameraState.dragging = false;
+                        viewportCameraState.rotateCandidate = false;
+                        viewportCameraState.rotating = false;
+                    } else {
+                        viewportCameraState.dragCandidate = true;
+                        viewportCameraState.dragging = false;
+                        viewportCameraState.rotateCandidate = false;
+                        viewportCameraState.rotating = false;
+                    }
                 } else {
                     viewportCameraState.dragCandidate = true;
                     viewportCameraState.dragging = false;
@@ -2255,12 +2694,133 @@ void drawViewport(
             }
         }
 
-        const float aspect = canvasSize.y > 0.0f ? (canvasSize.x / canvasSize.y) : 1.0f;
-        const nut::math::Mat4 viewMatrix = buildViewportViewMatrix(viewportCameraState);
-        const nut::math::Mat4 projectionMatrix =
-            nut::math::Mat4::makePerspective(nut::math::degToRad(viewportCameraState.fov), aspect, 0.02f, 100.0f);
-        const nut::math::Mat4 viewProjectionMatrix = projectionMatrix * viewMatrix;
-        const nut::math::Mat4 identityMatrix;
+        if (viewportGizmoState.active) {
+            if (ImGui::IsMouseDown(ImGuiMouseButton_Left) &&
+                viewportGizmoState.targetSelectionKind == sceneData.selectionKind &&
+                viewportGizmoState.targetSelectionRevision == sceneData.selectionRevision &&
+                ((viewportGizmoState.targetSelectionKind == EditorSelectionKind::SceneCamera) ||
+                 viewportGizmoState.object == sceneData.selectedObject) &&
+                viewportGizmoState.axis >= 0 &&
+                viewportGizmoState.axis < 3) {
+                const ImVec2 axisPixels(
+                    viewportGizmoState.screenEnd.x - viewportGizmoState.screenOrigin.x,
+                    viewportGizmoState.screenEnd.y - viewportGizmoState.screenOrigin.y
+                );
+                const float axisPixelLength = std::sqrt(axisPixels.x * axisPixels.x + axisPixels.y * axisPixels.y);
+                if (axisPixelLength > 0.0001f) {
+                    const ImVec2 mouseDelta(
+                        mousePos.x - viewportGizmoState.dragStartMouse.x,
+                        mousePos.y - viewportGizmoState.dragStartMouse.y
+                    );
+                    const float projectedPixels =
+                        (mouseDelta.x * axisPixels.x + mouseDelta.y * axisPixels.y) / axisPixelLength;
+                    const float axisProgress = projectedPixels / axisPixelLength;
+                    if (viewportGizmoState.targetSelectionKind == EditorSelectionKind::SceneCamera) {
+                        if (viewportGizmoState.mode == ViewportGizmoMode::Move) {
+                            const float deltaLocal = axisProgress * viewportGizmoState.localAxisLength;
+                            sceneData.camera.position[viewportGizmoState.axis] =
+                                viewportGizmoState.dragStartPosition[viewportGizmoState.axis] + deltaLocal;
+                        } else if (viewportGizmoState.mode == ViewportGizmoMode::Rotate) {
+                            const float deltaRadians = axisProgress * nut::math::degToRad(90.0f);
+                            sceneData.camera.rotation[viewportGizmoState.axis] =
+                                viewportGizmoState.dragStartRotation[viewportGizmoState.axis] + deltaRadians;
+                        }
+                    } else if (viewportGizmoState.mode == ViewportGizmoMode::Move) {
+                        const float deltaLocal = axisProgress * viewportGizmoState.localAxisLength;
+                        for (const ViewportTransformGizmoState::ObjectSnapshot& snapshot : viewportGizmoState.objectSnapshots) {
+                            if (snapshot.object == nullptr) {
+                                continue;
+                            }
+                            snapshot.object->position[viewportGizmoState.axis] =
+                                snapshot.position[viewportGizmoState.axis] + deltaLocal;
+                        }
+                    } else if (viewportGizmoState.mode == ViewportGizmoMode::Scale) {
+                        if (viewportGizmoState.transformSpace == ViewportTransformSpace::Group) {
+                            const float scaleFactor = std::max(0.05f, 1.0f + axisProgress);
+                            const nut::math::Vec3 axisDirection = translationGizmo.axisDirections[viewportGizmoState.axis];
+                            for (const ViewportTransformGizmoState::ObjectSnapshot& snapshot : viewportGizmoState.objectSnapshots) {
+                                if (snapshot.object == nullptr) {
+                                    continue;
+                                }
+
+                                const nut::math::Vec3 offset = snapshot.worldPosition - viewportGizmoState.groupPivotWorld;
+                                const float axisDistance =
+                                    offset.x * axisDirection.x +
+                                    offset.y * axisDirection.y +
+                                    offset.z * axisDirection.z;
+                                const nut::math::Vec3 parallel = axisDirection * axisDistance;
+                                const nut::math::Vec3 perpendicular = offset - parallel;
+                                const nut::math::Vec3 scaledWorldPosition =
+                                    viewportGizmoState.groupPivotWorld + perpendicular + parallel * scaleFactor;
+                                const nut::math::Mat4 inverseParentWorld = invertAffineMatrix(snapshot.parentWorldMatrix);
+                                const nut::math::Vec3 localPosition = inverseParentWorld * scaledWorldPosition;
+
+                                snapshot.object->position[0] = localPosition.x;
+                                snapshot.object->position[1] = localPosition.y;
+                                snapshot.object->position[2] = localPosition.z;
+                                snapshot.object->scale[viewportGizmoState.axis] = std::max(
+                                    0.05f,
+                                    snapshot.scale[viewportGizmoState.axis] * scaleFactor
+                                );
+                            }
+                        } else {
+                            const float deltaScale = axisProgress;
+                            for (const ViewportTransformGizmoState::ObjectSnapshot& snapshot : viewportGizmoState.objectSnapshots) {
+                                if (snapshot.object == nullptr) {
+                                    continue;
+                                }
+                                snapshot.object->scale[viewportGizmoState.axis] = std::max(
+                                    0.05f,
+                                    snapshot.scale[viewportGizmoState.axis] + deltaScale
+                                );
+                            }
+                        }
+                    } else if (viewportGizmoState.mode == ViewportGizmoMode::Rotate) {
+                        const float deltaRadians = axisProgress * nut::math::degToRad(90.0f);
+                        if (viewportGizmoState.transformSpace == ViewportTransformSpace::Group) {
+                            const nut::math::Vec3 axisDirection = translationGizmo.axisDirections[viewportGizmoState.axis];
+                            for (const ViewportTransformGizmoState::ObjectSnapshot& snapshot : viewportGizmoState.objectSnapshots) {
+                                if (snapshot.object == nullptr) {
+                                    continue;
+                                }
+
+                                const nut::math::Vec3 offset = snapshot.worldPosition - viewportGizmoState.groupPivotWorld;
+                                const nut::math::Vec3 rotatedOffset =
+                                    rotateVectorAroundAxis(offset, axisDirection, deltaRadians);
+                                const nut::math::Vec3 rotatedWorldPosition =
+                                    viewportGizmoState.groupPivotWorld + rotatedOffset;
+                                const nut::math::Mat4 inverseParentWorld = invertAffineMatrix(snapshot.parentWorldMatrix);
+                                const nut::math::Vec3 localPosition = inverseParentWorld * rotatedWorldPosition;
+
+                                snapshot.object->position[0] = localPosition.x;
+                                snapshot.object->position[1] = localPosition.y;
+                                snapshot.object->position[2] = localPosition.z;
+                                snapshot.object->rotation[viewportGizmoState.axis] =
+                                    snapshot.rotation[viewportGizmoState.axis] + deltaRadians;
+                            }
+                        } else {
+                            for (const ViewportTransformGizmoState::ObjectSnapshot& snapshot : viewportGizmoState.objectSnapshots) {
+                                if (snapshot.object == nullptr) {
+                                    continue;
+                                }
+                                snapshot.object->rotation[viewportGizmoState.axis] =
+                                    snapshot.rotation[viewportGizmoState.axis] + deltaRadians;
+                            }
+                        }
+                    }
+                    markSceneDirty(sceneData);
+                    syncInspectorTransformBuffers(inspectorState, sceneData);
+                }
+            } else {
+                syncInspectorTransformBuffers(inspectorState, sceneData);
+                viewportGizmoState.active = false;
+                viewportGizmoState.targetSelectionKind = EditorSelectionKind::None;
+                viewportGizmoState.targetSelectionRevision = 0;
+                viewportGizmoState.axis = -1;
+                viewportGizmoState.object = nullptr;
+                viewportGizmoState.objectSnapshots.clear();
+            }
+        }
 
         if (viewportCameraState.rotateCandidate) {
             if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
@@ -2332,15 +2892,19 @@ void drawViewport(
                         );
                     }
 
+                    const bool shiftPressed = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
                     if (pickResult.sceneCamera) {
-                        sceneData.selectionKind = EditorSelectionKind::SceneCamera;
-                        sceneData.selectedObject = nullptr;
+                        selectSceneCamera(sceneData);
                     } else if (pickResult.object != nullptr) {
-                        sceneData.selectionKind = EditorSelectionKind::Object;
-                        sceneData.selectedObject = pickResult.object;
+                        if (shiftPressed) {
+                            toggleObjectSelection(sceneData, pickResult.object);
+                        } else {
+                            selectSingleObject(sceneData, pickResult.object);
+                        }
                     } else {
-                        sceneData.selectionKind = EditorSelectionKind::None;
-                        sceneData.selectedObject = nullptr;
+                        if (!shiftPressed) {
+                            clearSelection(sceneData);
+                        }
                     }
                 }
                 viewportCameraState.dragCandidate = false;
@@ -2358,6 +2922,15 @@ void drawViewport(
             viewportDisplayState.showGroundGrid,
             true
         );
+        if (hasAxisGizmo) {
+            if (viewportGizmoState.mode == ViewportGizmoMode::Move) {
+                drawViewportTranslationGizmo(drawList, sceneData, translationGizmo, viewportGizmoState);
+            } else if (viewportGizmoState.mode == ViewportGizmoMode::Scale) {
+                drawViewportScaleGizmo(drawList, translationGizmo, viewportGizmoState);
+            } else if (viewportGizmoState.mode == ViewportGizmoMode::Rotate) {
+                drawViewportRotationGizmo(drawList, translationGizmo, viewportGizmoState);
+            }
+        }
 
         if (viewportDisplayState.showSceneCameraPreview) {
             const float previewHeaderHeight = 18.0f;
@@ -2914,6 +3487,365 @@ void drawSceneCameraGizmo(
     drawSegment(upMarkerBaseRight, upMarkerBaseLeft);
 }
 
+bool tryFindObjectWorldMatrices(
+    const std::vector<std::unique_ptr<EditorObjectData>>& roots,
+    EditorObjectData* target,
+    const nut::math::Mat4& parentWorldMatrix,
+    nut::math::Mat4& outParentWorldMatrix,
+    nut::math::Mat4& outWorldMatrix
+) {
+    for (const std::unique_ptr<EditorObjectData>& root : roots) {
+        if (root.get() == target) {
+            outParentWorldMatrix = parentWorldMatrix;
+            outWorldMatrix = parentWorldMatrix * makeEditorObjectLocalMatrix(*root);
+            return true;
+        }
+
+        const nut::math::Mat4 worldMatrix = parentWorldMatrix * makeEditorObjectLocalMatrix(*root);
+        if (tryFindObjectWorldMatrices(root->children, target, worldMatrix, outParentWorldMatrix, outWorldMatrix)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool buildViewportTranslationGizmo(
+    const EditorSceneData& sceneData,
+    ViewportGizmoMode gizmoMode,
+    const ViewportCameraState& viewportCameraState,
+    const nut::math::Mat4& viewMatrix,
+    const nut::math::Mat4& projectionMatrix,
+    ImVec2 canvasPos,
+    ImVec2 canvasSize,
+    ViewportTranslationGizmoInfo& outGizmo
+) {
+    outGizmo = ViewportTranslationGizmoInfo {};
+    if (sceneData.selectionKind == EditorSelectionKind::SceneCamera) {
+        if (gizmoMode == ViewportGizmoMode::Scale) {
+            return false;
+        }
+
+        const nut::math::Mat4 cameraWorldMatrix = buildSceneCameraWorldMatrix(sceneData);
+        const nut::math::Vec3 worldOrigin = cameraWorldMatrix * nut::math::Vec3(0.0f, 0.0f, 0.0f);
+        const nut::math::Mat4 viewProjectionMatrix = projectionMatrix * viewMatrix;
+        if (!projectViewportPoint(worldOrigin, viewProjectionMatrix, canvasPos, canvasSize, outGizmo.screenOrigin)) {
+            return false;
+        }
+
+        const nut::math::Vec3 cameraPosition(
+            viewportCameraState.position[0],
+            viewportCameraState.position[1],
+            viewportCameraState.position[2]
+        );
+        const nut::math::Vec3 toCamera = worldOrigin - cameraPosition;
+        const float distanceToCamera = std::sqrt(
+            toCamera.x * toCamera.x +
+            toCamera.y * toCamera.y +
+            toCamera.z * toCamera.z
+        );
+        const float targetWorldLength = std::clamp(distanceToCamera * 0.15f, 0.36f, 1.9f);
+        const nut::math::Vec3 axisUnits[3] = {
+            nut::math::Vec3(1.0f, 0.0f, 0.0f),
+            nut::math::Vec3(0.0f, 1.0f, 0.0f),
+            nut::math::Vec3(0.0f, 0.0f, 1.0f)
+        };
+
+        for (int axis = 0; axis < 3; ++axis) {
+            outGizmo.axisDirections[axis] = axisUnits[axis];
+            outGizmo.axisLocalLengths[axis] = targetWorldLength;
+            const nut::math::Vec3 worldEnd = worldOrigin + axisUnits[axis] * targetWorldLength;
+            outGizmo.axisVisible[axis] = projectViewportPoint(
+                worldEnd,
+                viewProjectionMatrix,
+                canvasPos,
+                canvasSize,
+                outGizmo.screenEnds[axis]
+            );
+        }
+
+        outGizmo.visible = true;
+        return true;
+    }
+
+    if (sceneData.selectionKind != EditorSelectionKind::Object || sceneData.selectedObject == nullptr) {
+        return false;
+    }
+
+    const nut::math::Mat4 identityMatrix;
+    nut::math::Mat4 parentWorldMatrix;
+    nut::math::Mat4 worldMatrix;
+    if (!tryFindObjectWorldMatrices(sceneData.roots, sceneData.selectedObject, identityMatrix, parentWorldMatrix, worldMatrix)) {
+        return false;
+    }
+
+    const nut::math::Vec3 worldOrigin = worldMatrix * nut::math::Vec3(0.0f, 0.0f, 0.0f);
+    const nut::math::Mat4 viewProjectionMatrix = projectionMatrix * viewMatrix;
+    if (!projectViewportPoint(worldOrigin, viewProjectionMatrix, canvasPos, canvasSize, outGizmo.screenOrigin)) {
+        return false;
+    }
+
+    const nut::math::Vec3 cameraPosition(
+        viewportCameraState.position[0],
+        viewportCameraState.position[1],
+        viewportCameraState.position[2]
+    );
+    const nut::math::Vec3 toCamera = worldOrigin - cameraPosition;
+    const float distanceToCamera = std::sqrt(
+        toCamera.x * toCamera.x +
+        toCamera.y * toCamera.y +
+        toCamera.z * toCamera.z
+    );
+    const float targetWorldLength = std::clamp(distanceToCamera * 0.15f, 0.36f, 1.9f);
+    const nut::math::Vec3 parentOrigin = parentWorldMatrix * nut::math::Vec3(0.0f, 0.0f, 0.0f);
+
+    const nut::math::Vec3 axisUnits[3] = {
+        nut::math::Vec3(1.0f, 0.0f, 0.0f),
+        nut::math::Vec3(0.0f, 1.0f, 0.0f),
+        nut::math::Vec3(0.0f, 0.0f, 1.0f)
+    };
+
+    for (int axis = 0; axis < 3; ++axis) {
+        const nut::math::Vec3 parentAxisPoint = parentWorldMatrix * axisUnits[axis];
+        nut::math::Vec3 worldAxisVector = parentAxisPoint - parentOrigin;
+        float worldAxisScale = std::sqrt(
+            worldAxisVector.x * worldAxisVector.x +
+            worldAxisVector.y * worldAxisVector.y +
+            worldAxisVector.z * worldAxisVector.z
+        );
+        if (worldAxisScale < 0.0001f) {
+            worldAxisVector = axisUnits[axis];
+            worldAxisScale = 1.0f;
+        }
+
+        outGizmo.axisDirections[axis] = worldAxisVector * (1.0f / worldAxisScale);
+        outGizmo.axisLocalLengths[axis] = targetWorldLength / worldAxisScale;
+        const nut::math::Vec3 worldEnd =
+            worldOrigin + outGizmo.axisDirections[axis] * targetWorldLength;
+        outGizmo.axisVisible[axis] = projectViewportPoint(
+            worldEnd,
+            viewProjectionMatrix,
+            canvasPos,
+            canvasSize,
+            outGizmo.screenEnds[axis]
+        );
+    }
+
+    outGizmo.visible = true;
+    return true;
+}
+
+int pickViewportTranslationGizmoAxis(
+    const ViewportTranslationGizmoInfo& gizmo,
+    ImVec2 mousePos
+) {
+    constexpr float kPickThresholdPixels = 10.0f;
+    float bestDistance = FLT_MAX;
+    int bestAxis = -1;
+    for (int axis = 0; axis < 3; ++axis) {
+        if (!gizmo.axisVisible[axis]) {
+            continue;
+        }
+
+        const float distance = distanceToViewportSegment(
+            mousePos,
+            gizmo.screenOrigin,
+            gizmo.screenEnds[axis]
+        );
+        if (distance <= kPickThresholdPixels && distance < bestDistance) {
+            bestDistance = distance;
+            bestAxis = axis;
+        }
+    }
+    return bestAxis;
+}
+
+void drawViewportTranslationGizmo(
+    ImDrawList* drawList,
+    const EditorSceneData&,
+    const ViewportTranslationGizmoInfo& gizmo,
+    const ViewportTransformGizmoState& gizmoState
+) {
+    if (!gizmo.visible) {
+        return;
+    }
+
+    const ImU32 axisColors[3] = {
+        motif::AxisRed,
+        motif::AxisGreen,
+        motif::AxisBlue
+    };
+
+    const ImVec2 squareHalfExtents(2.5f, 2.5f);
+    const float axisStartGapPixels = 2.5f;
+    drawList->AddRectFilled(
+        ImVec2(gizmo.screenOrigin.x - squareHalfExtents.x, gizmo.screenOrigin.y - squareHalfExtents.y),
+        ImVec2(gizmo.screenOrigin.x + squareHalfExtents.x, gizmo.screenOrigin.y + squareHalfExtents.y),
+        motif::PanelLight
+    );
+    for (int axis = 0; axis < 3; ++axis) {
+        if (!gizmo.axisVisible[axis]) {
+            continue;
+        }
+        const ImU32 color = (gizmoState.active && gizmoState.axis == axis)
+            ? motif::AccentYellow
+            : axisColors[axis];
+        const ImVec2 axisDirection(
+            gizmo.screenEnds[axis].x - gizmo.screenOrigin.x,
+            gizmo.screenEnds[axis].y - gizmo.screenOrigin.y
+        );
+        const float axisLength = std::sqrt(
+            axisDirection.x * axisDirection.x +
+            axisDirection.y * axisDirection.y
+        );
+        if (axisLength <= 0.001f) {
+            continue;
+        }
+
+        const ImVec2 axisUnit(axisDirection.x / axisLength, axisDirection.y / axisLength);
+        const ImVec2 axisStart(
+            gizmo.screenOrigin.x + axisUnit.x * axisStartGapPixels,
+            gizmo.screenOrigin.y + axisUnit.y * axisStartGapPixels
+        );
+        drawList->AddLine(axisStart, gizmo.screenEnds[axis], color, 1.75f);
+        drawViewportTranslationArrowHead(drawList, axisStart, gizmo.screenEnds[axis], color);
+    }
+}
+
+void drawViewportScaleGizmo(
+    ImDrawList* drawList,
+    const ViewportTranslationGizmoInfo& gizmo,
+    const ViewportTransformGizmoState& gizmoState
+) {
+    if (!gizmo.visible) {
+        return;
+    }
+
+    const ImU32 axisColors[3] = {
+        motif::AxisRed,
+        motif::AxisGreen,
+        motif::AxisBlue
+    };
+
+    const ImVec2 squareHalfExtents(2.5f, 2.5f);
+    drawList->AddRectFilled(
+        ImVec2(gizmo.screenOrigin.x - squareHalfExtents.x, gizmo.screenOrigin.y - squareHalfExtents.y),
+        ImVec2(gizmo.screenOrigin.x + squareHalfExtents.x, gizmo.screenOrigin.y + squareHalfExtents.y),
+        motif::PanelLight
+    );
+
+    for (int axis = 0; axis < 3; ++axis) {
+        if (!gizmo.axisVisible[axis]) {
+            continue;
+        }
+
+        const ImU32 color = (gizmoState.active && gizmoState.axis == axis)
+            ? motif::AccentYellow
+            : axisColors[axis];
+        const ImVec2 axisDirection(
+            gizmo.screenEnds[axis].x - gizmo.screenOrigin.x,
+            gizmo.screenEnds[axis].y - gizmo.screenOrigin.y
+        );
+        const float axisLength = std::sqrt(
+            axisDirection.x * axisDirection.x +
+            axisDirection.y * axisDirection.y
+        );
+        if (axisLength <= 0.001f) {
+            continue;
+        }
+
+        const ImVec2 axisUnit(axisDirection.x / axisLength, axisDirection.y / axisLength);
+        const ImVec2 axisStart(
+            gizmo.screenOrigin.x + axisUnit.x * 2.5f,
+            gizmo.screenOrigin.y + axisUnit.y * 2.5f
+        );
+        drawList->AddLine(axisStart, gizmo.screenEnds[axis], color, 1.75f);
+        drawList->AddRectFilled(
+            ImVec2(gizmo.screenEnds[axis].x - 3.0f, gizmo.screenEnds[axis].y - 3.0f),
+            ImVec2(gizmo.screenEnds[axis].x + 3.0f, gizmo.screenEnds[axis].y + 3.0f),
+            color
+        );
+    }
+}
+
+void drawViewportRotationGizmo(
+    ImDrawList* drawList,
+    const ViewportTranslationGizmoInfo& gizmo,
+    const ViewportTransformGizmoState& gizmoState
+) {
+    if (!gizmo.visible) {
+        return;
+    }
+
+    const ImU32 axisColors[3] = {
+        motif::AxisRed,
+        motif::AxisGreen,
+        motif::AxisBlue
+    };
+
+    drawList->AddCircleFilled(gizmo.screenOrigin, 2.5f, motif::PanelLight);
+    for (int axis = 0; axis < 3; ++axis) {
+        if (!gizmo.axisVisible[axis]) {
+            continue;
+        }
+
+        const ImU32 color = (gizmoState.active && gizmoState.axis == axis)
+            ? motif::AccentYellow
+            : axisColors[axis];
+        const ImVec2 axisDirection(
+            gizmo.screenEnds[axis].x - gizmo.screenOrigin.x,
+            gizmo.screenEnds[axis].y - gizmo.screenOrigin.y
+        );
+        const float axisLength = std::sqrt(
+            axisDirection.x * axisDirection.x +
+            axisDirection.y * axisDirection.y
+        );
+        if (axisLength <= 0.001f) {
+            continue;
+        }
+
+        const ImVec2 axisUnit(axisDirection.x / axisLength, axisDirection.y / axisLength);
+        const ImVec2 axisStart(
+            gizmo.screenOrigin.x + axisUnit.x * 2.5f,
+            gizmo.screenOrigin.y + axisUnit.y * 2.5f
+        );
+        drawList->AddLine(axisStart, gizmo.screenEnds[axis], color, 1.75f);
+        drawList->AddCircle(gizmo.screenEnds[axis], 4.0f, color, 0, 1.5f);
+    }
+}
+
+void drawViewportTranslationArrowHead(
+    ImDrawList* drawList,
+    ImVec2 start,
+    ImVec2 end,
+    ImU32 color
+) {
+    const ImVec2 direction(end.x - start.x, end.y - start.y);
+    const float length = std::sqrt(direction.x * direction.x + direction.y * direction.y);
+    if (length < 0.001f) {
+        return;
+    }
+
+    const ImVec2 unit(direction.x / length, direction.y / length);
+    const ImVec2 normal(-unit.y, unit.x);
+    const float arrowLength = 8.0f;
+    const float arrowWidth = 4.0f;
+    const ImVec2 base(
+        end.x - unit.x * arrowLength,
+        end.y - unit.y * arrowLength
+    );
+    const ImVec2 left(
+        base.x + normal.x * arrowWidth,
+        base.y + normal.y * arrowWidth
+    );
+    const ImVec2 right(
+        base.x - normal.x * arrowWidth,
+        base.y - normal.y * arrowWidth
+    );
+
+    drawList->AddTriangleFilled(end, left, right, color);
+}
+
 void drawViewportSceneContents(
     ImDrawList* drawList,
     const EditorSceneData& sceneData,
@@ -2960,9 +3892,7 @@ void drawNanoPreviewObjectRecursive(
     ImVec2 canvasSize
 ) {
     const nut::math::Mat4 worldMatrix = parentWorldMatrix * makeEditorObjectLocalMatrix(object);
-    const bool isSelected =
-        sceneData.selectionKind == EditorSelectionKind::Object &&
-        sceneData.selectedObject == &object;
+    const bool isSelected = isObjectSelected(sceneData, &object);
     const nut::Mesh* mesh = getViewportMesh(sceneData, object.meshPath);
     if (mesh != nullptr) {
         std::vector<ImVec2> screenPoints(mesh->vertices.size());
@@ -3053,9 +3983,7 @@ void drawViewportObjectRecursive(
     ImVec2 canvasSize
 ) {
     const nut::math::Mat4 worldMatrix = parentWorldMatrix * makeEditorObjectLocalMatrix(object);
-    const bool isSelected =
-        sceneData.selectionKind == EditorSelectionKind::Object &&
-        sceneData.selectedObject == &object;
+    const bool isSelected = isObjectSelected(sceneData, &object);
     const bool highlightObject = parentSelected || isSelected;
     const nut::Mesh* mesh = getViewportMesh(sceneData, object.meshPath);
     if (mesh != nullptr) {
@@ -3198,7 +4126,6 @@ bool drawScriptCard(
     const std::string popupId = script.type + "##SourceModal";
 
     const ImGuiStyle& style = ImGui::GetStyle();
-    const float lineHeight = ImGui::GetFrameHeightWithSpacing();
     float propertyLabelWidth = 0.0f;
     if (script.scriptJson.isObject()) {
         for (const auto& entry : script.scriptJson.objectValue) {
@@ -3210,15 +4137,15 @@ bool drawScriptCard(
     }
     propertyLabelWidth += 16.0f;
 
-    float cardHeight = style.WindowPadding.y * 2.0f + ImGui::GetFrameHeight();
-    if (script.expanded) {
-        const size_t propertyCount = countVisibleScriptProperties(script);
-        const float propertyRows = propertyCount == 0 ? 1.0f : static_cast<float>(propertyCount);
-        cardHeight += 8.0f;
-        cardHeight += lineHeight * (2.0f + propertyRows);
-    } else {
-        cardHeight += 4.0f;
-    }
+    const float lineHeight = ImGui::GetFrameHeightWithSpacing();
+    const size_t propertyCount = countVisibleScriptProperties(script);
+    const float propertyRows = propertyCount == 0 ? 1.0f : static_cast<float>(propertyCount);
+    const float cardHeight =
+        style.WindowPadding.y * 2.0f +
+        ImGui::GetFrameHeight() +
+        8.0f +
+        lineHeight * (3.0f + propertyRows) +
+        12.0f;
 
     ImGui::BeginChild(
         (script.type + "##Card").c_str(),
@@ -3228,53 +4155,40 @@ bool drawScriptCard(
 
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(script.type.c_str());
+
+    ImGui::Separator();
+    drawScriptSourceRow(sourceDisplay, labelWidth);
+    ImGui::Spacing();
+    if (hasSource) {
+        if (ImGui::SmallButton("View")) {
+            ImGui::OpenPopup(popupId.c_str());
+        }
+    } else {
+        ImGui::BeginDisabled();
+        ImGui::SmallButton("View");
+        ImGui::EndDisabled();
+    }
     ImGui::SameLine();
-    const float buttonWidth = 18.0f;
-    const float buttonX = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - buttonWidth;
-    if (buttonX > ImGui::GetCursorPosX()) {
-        ImGui::SetCursorPosX(buttonX);
+    if (ImGui::SmallButton("Remove")) {
+        ImGui::EndChild();
+        drawSunkenPanelFrame();
+        return true;
     }
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.0f, 1.0f));
-    if (ImGui::SmallButton(script.expanded ? "-" : "+")) {
-        script.expanded = !script.expanded;
+    if (hasSource) {
+        drawScriptSourceModal(script, sourcePath);
     }
-    ImGui::PopStyleVar();
 
-    if (script.expanded) {
-        ImGui::Separator();
-        drawScriptSourceRow(sourceDisplay, labelWidth);
-        ImGui::Spacing();
-        if (hasSource) {
-            if (ImGui::SmallButton("View")) {
-                ImGui::OpenPopup(popupId.c_str());
+    ImGui::Spacing();
+    ImGui::TextDisabled("Properties");
+    const bool hasProperties = countVisibleScriptProperties(script) > 0;
+    if (!hasProperties) {
+        ImGui::TextDisabled("No properties.");
+    } else {
+        for (const auto& entry : script.scriptJson.objectValue) {
+            if (entry.first == "type") {
+                continue;
             }
-        } else {
-            ImGui::BeginDisabled();
-            ImGui::SmallButton("View");
-            ImGui::EndDisabled();
-        }
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Remove")) {
-            ImGui::EndChild();
-            drawSunkenPanelFrame();
-            return true;
-        }
-        if (hasSource) {
-            drawScriptSourceModal(script, sourcePath);
-        }
-
-        ImGui::Spacing();
-        ImGui::TextDisabled("Properties");
-        const bool hasProperties = countVisibleScriptProperties(script) > 0;
-        if (!hasProperties) {
-            ImGui::TextDisabled("No properties.");
-        } else {
-            for (const auto& entry : script.scriptJson.objectValue) {
-                if (entry.first == "type") {
-                    continue;
-                }
-                drawScriptPropertyRow(entry.first.c_str(), formatJsonValue(entry.second), propertyLabelWidth);
-            }
+            drawScriptPropertyRow(entry.first.c_str(), formatJsonValue(entry.second), propertyLabelWidth);
         }
     }
 
@@ -3319,12 +4233,14 @@ void drawScriptSourceModal(const EditorScriptData& script, const std::string& so
 
 void syncInspectorState(InspectorState& inspectorState, const EditorSceneData& sceneData) {
     if (inspectorState.syncedSelectionKind == sceneData.selectionKind &&
-        inspectorState.syncedObject == sceneData.selectedObject) {
+        inspectorState.syncedObject == sceneData.selectedObject &&
+        inspectorState.syncedSelectionRevision == sceneData.selectionRevision) {
         return;
     }
 
     inspectorState.syncedSelectionKind = sceneData.selectionKind;
     inspectorState.syncedObject = sceneData.selectedObject;
+    inspectorState.syncedSelectionRevision = sceneData.selectionRevision;
     inspectorState.nameBuffer[0] = '\0';
 
     if (sceneData.selectionKind == EditorSelectionKind::SceneCamera) {
@@ -3350,6 +4266,27 @@ void syncInspectorState(InspectorState& inspectorState, const EditorSceneData& s
         formatFloatToBuffer(selectedObject->position[i], inspectorState.positionBuffers[i], sizeof(inspectorState.positionBuffers[i]));
         formatFloatToBuffer(selectedObject->rotation[i], inspectorState.rotationBuffers[i], sizeof(inspectorState.rotationBuffers[i]));
         formatFloatToBuffer(selectedObject->scale[i], inspectorState.scaleBuffers[i], sizeof(inspectorState.scaleBuffers[i]));
+    }
+}
+
+void syncInspectorTransformBuffers(InspectorState& inspectorState, const EditorSceneData& sceneData) {
+    if (sceneData.selectionKind == EditorSelectionKind::SceneCamera) {
+        for (int i = 0; i < 3; ++i) {
+            formatFloatToBuffer(sceneData.camera.position[i], inspectorState.positionBuffers[i], sizeof(inspectorState.positionBuffers[i]));
+            formatFloatToBuffer(sceneData.camera.rotation[i], inspectorState.rotationBuffers[i], sizeof(inspectorState.rotationBuffers[i]));
+        }
+        formatFloatToBuffer(sceneData.camera.fov, inspectorState.fovBuffer, sizeof(inspectorState.fovBuffer));
+        return;
+    }
+
+    if (sceneData.selectionKind != EditorSelectionKind::Object || sceneData.selectedObject == nullptr) {
+        return;
+    }
+
+    for (int i = 0; i < 3; ++i) {
+        formatFloatToBuffer(sceneData.selectedObject->position[i], inspectorState.positionBuffers[i], sizeof(inspectorState.positionBuffers[i]));
+        formatFloatToBuffer(sceneData.selectedObject->rotation[i], inspectorState.rotationBuffers[i], sizeof(inspectorState.rotationBuffers[i]));
+        formatFloatToBuffer(sceneData.selectedObject->scale[i], inspectorState.scaleBuffers[i], sizeof(inspectorState.scaleBuffers[i]));
     }
 }
 
@@ -3385,8 +4322,7 @@ void addObjectFromHierarchy(EditorSceneData& sceneData) {
     }
 
     refreshSceneObjectPaths(sceneData);
-    sceneData.selectionKind = EditorSelectionKind::Object;
-    sceneData.selectedObject = newSelection;
+    selectSingleObject(sceneData, newSelection);
     markSceneDirty(sceneData);
     updateSceneAnalysis(sceneData, false);
 }
@@ -3416,8 +4352,7 @@ void removeSelectedObjectFromHierarchy(EditorSceneData& sceneData) {
             ),
             siblings.end()
         );
-        sceneData.selectionKind = EditorSelectionKind::Object;
-        sceneData.selectedObject = parentObject;
+        selectSingleObject(sceneData, parentObject);
         appendConsoleLine(sceneData, "> Removed object and selected its parent.");
     } else {
         auto& roots = sceneData.roots;
@@ -3433,8 +4368,11 @@ void removeSelectedObjectFromHierarchy(EditorSceneData& sceneData) {
         );
 
         EditorObjectData* fallbackSelection = findFirstObject(sceneData.roots);
-        sceneData.selectedObject = fallbackSelection;
-        sceneData.selectionKind = fallbackSelection ? EditorSelectionKind::Object : EditorSelectionKind::SceneCamera;
+        if (fallbackSelection != nullptr) {
+            selectSingleObject(sceneData, fallbackSelection);
+        } else {
+            selectSceneCamera(sceneData);
+        }
         appendConsoleLine(sceneData, "> Removed root object.");
     }
 
@@ -3910,13 +4848,12 @@ bool drawVec3TextFields(const char* label, float values[3], char buffers[3][32])
         ImGui::SameLine(0.0f, axisGap);
         ImGui::SetNextItemWidth(fieldWidth);
         std::string inputId = std::string("##") + axisLabels[i];
-        if (ImGui::InputText(inputId.c_str(), buffers[i], sizeof(buffers[i]), ImGuiInputTextFlags_EnterReturnsTrue)) {
+        if (ImGui::InputText(inputId.c_str(), buffers[i], sizeof(buffers[i]))) {
             float parsedValue = values[i];
             if (tryParseFloatBuffer(buffers[i], parsedValue) && parsedValue != values[i]) {
                 values[i] = parsedValue;
                 changed = true;
             }
-            formatFloatToBuffer(values[i], buffers[i], sizeof(buffers[i]));
         }
         if (ImGui::IsItemDeactivatedAfterEdit()) {
             float parsedValue = values[i];
@@ -3942,13 +4879,12 @@ bool drawSingleFloatField(const char* label, float& value, char buffer[32], floa
     ImGui::SameLine();
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
     std::string inputId = std::string("##") + label;
-    if (ImGui::InputText(inputId.c_str(), buffer, 32, ImGuiInputTextFlags_EnterReturnsTrue)) {
+    if (ImGui::InputText(inputId.c_str(), buffer, 32)) {
         float parsedValue = value;
         if (tryParseFloatBuffer(buffer, parsedValue) && parsedValue != value) {
             value = parsedValue;
             changed = true;
         }
-        formatFloatToBuffer(value, buffer, 32);
     }
     if (ImGui::IsItemDeactivatedAfterEdit()) {
         float parsedValue = value;
@@ -4018,10 +4954,46 @@ void drawInspector(const EditorLayout& layout, bool forceLayout, EditorSceneData
         markSceneDirty(sceneData);
     }
 
-    std::string meshLabel = object.meshPath.empty() ? "(empty)" : object.meshPath;
-    ImGui::BeginDisabled();
-    drawLabeledReadOnlyInputText("Mesh", meshLabel, inspectorLabelWidth);
-    ImGui::EndDisabled();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Mesh");
+    ImGui::SameLine();
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, inspectorLabelWidth - ImGui::CalcTextSize("Mesh").x));
+    ImGui::SameLine();
+    const std::vector<std::string> availableMeshes = availableEditorMeshPaths();
+    std::string selectedMeshLabel = object.meshPath.empty() ? "(empty)" : object.meshPath;
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+    if (ImGui::BeginCombo("##MeshSelector", selectedMeshLabel.c_str())) {
+        const bool emptySelected = object.meshPath.empty();
+        if (ImGui::Selectable("(empty)", emptySelected)) {
+            if (!object.meshPath.empty()) {
+                object.meshPath.clear();
+                markSceneDirty(sceneData);
+                updateSceneAnalysis(sceneData, false);
+            }
+        }
+
+        bool currentMeshListed = object.meshPath.empty();
+        for (const std::string& meshPath : availableMeshes) {
+            const bool selected = object.meshPath == meshPath;
+            if (selected) {
+                currentMeshListed = true;
+            }
+            if (ImGui::Selectable(meshPath.c_str(), selected)) {
+                if (object.meshPath != meshPath) {
+                    object.meshPath = meshPath;
+                    markSceneDirty(sceneData);
+                    updateSceneAnalysis(sceneData, false);
+                }
+            }
+        }
+
+        if (!object.meshPath.empty() && !currentMeshListed) {
+            ImGui::Separator();
+            if (ImGui::Selectable(object.meshPath.c_str(), true)) {
+            }
+        }
+        ImGui::EndCombo();
+    }
 
     if (drawVec3TextFields("Position", object.position, inspectorState.positionBuffers)) {
         markSceneDirty(sceneData);
@@ -4297,6 +5269,14 @@ EditorUiActions drawBuildModal(
 int main() {
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
     InitWindow(1280, 800, "NutScene Editor");
+    const std::string editorIconPath = std::string(NUT_PROJECT_ROOT) + "/tools/scene_editor/assets/icons/editor_icon.png";
+    if (FileExists(editorIconPath.c_str())) {
+        Image editorIcon = LoadImage(editorIconPath.c_str());
+        if (editorIcon.data != nullptr) {
+            SetWindowIcon(editorIcon);
+            UnloadImage(editorIcon);
+        }
+    }
     MaximizeWindow();
     SetTargetFPS(60);
 
@@ -4329,6 +5309,7 @@ int main() {
     InspectorState inspectorState;
     ViewportCameraState viewportCameraState;
     ViewportDisplayState viewportDisplayState;
+    ViewportTransformGizmoState viewportGizmoState;
     EditorBuildSettings buildSettings = makeDefaultBuildSettings();
     syncBuildSettingsBuffers(buildSettings);
     EditorBackgroundTaskState backgroundTask;
@@ -4433,7 +5414,7 @@ int main() {
         if (hierarchyActions.moveSelectedObjectDown) {
             moveSelectedObjectInHierarchy(sceneData, 1);
         }
-        drawViewport(layout, forceLayout, sceneData, viewportCameraState, viewportDisplayState);
+        drawViewport(layout, forceLayout, sceneData, inspectorState, viewportCameraState, viewportDisplayState, viewportGizmoState);
         if (viewportSettingsDiffer(buildSettings, viewportCameraState, viewportDisplayState)) {
             captureViewportSettings(buildSettings, viewportCameraState, viewportDisplayState);
             saveBuildSettings(buildSettings);
