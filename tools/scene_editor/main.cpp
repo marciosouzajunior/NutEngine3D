@@ -184,6 +184,7 @@ struct ViewportTransformGizmoState {
     ImVec2 screenOrigin = ImVec2(0.0f, 0.0f);
     ImVec2 screenEnd = ImVec2(0.0f, 0.0f);
     float localAxisLength = 1.0f;
+    bool uniformScale = false;
     struct ObjectSnapshot {
         EditorObjectData* object = nullptr;
         float position[3] = {0.0f, 0.0f, 0.0f};
@@ -207,9 +208,12 @@ struct ViewportTranslationGizmoInfo {
 
 struct EditorUiActions {
     bool resetLayout = false;
+    bool undo = false;
+    bool redo = false;
     bool saveScene = false;
     bool discardScene = false;
     bool addObject = false;
+    bool duplicateSelectedObject = false;
     bool removeSelectedObject = false;
     bool moveSelectedObjectUp = false;
     bool moveSelectedObjectDown = false;
@@ -262,6 +266,22 @@ struct EditorBackgroundTaskState {
 
 struct EditorBuildModalState {
     bool openRequested = false;
+};
+
+struct EditorUndoState {
+    bool available = false;
+    nut::Json rootJson;
+    std::string scenePath;
+    EditorSelectionKind selectionKind = EditorSelectionKind::None;
+    std::string primarySelectionPath;
+    std::vector<std::string> selectedObjectPaths;
+    bool dirty = false;
+};
+
+struct EditorUndoHistory {
+    static constexpr size_t kMaxEntries = 10;
+    std::vector<EditorUndoState> undoStack;
+    std::vector<EditorUndoState> redoStack;
 };
 
 struct EditorTaskInput {
@@ -427,6 +447,10 @@ int pickViewportTranslationGizmoAxis(
     const ViewportTranslationGizmoInfo& gizmo,
     ImVec2 mousePos
 );
+bool pickViewportScaleUniformHandle(
+    const ViewportTranslationGizmoInfo& gizmo,
+    ImVec2 mousePos
+);
 void drawViewportTranslationGizmo(
     ImDrawList* drawList,
     const EditorSceneData& sceneData,
@@ -488,6 +512,13 @@ void selectSceneCamera(EditorSceneData& sceneData);
 void clearSelection(EditorSceneData& sceneData);
 nut::math::Mat4 invertAffineMatrix(const nut::math::Mat4& matrix);
 nut::math::Vec3 rotateVectorAroundAxis(const nut::math::Vec3& vector, const nut::math::Vec3& axisUnit, float radians);
+EditorObjectData* findObjectByPath(EditorSceneData& sceneData, const std::string& path);
+void captureUndoSnapshot(const EditorSceneData& sceneData, EditorUndoState& undoState);
+void pushUndoSnapshot(const EditorSceneData& sceneData, EditorUndoHistory& undoHistory);
+bool restoreUndoSnapshot(EditorSceneData& sceneData, const EditorUndoState& undoState);
+void applyUndo(EditorSceneData& sceneData, EditorUndoHistory& undoHistory, InspectorState& inspectorState);
+void applyRedo(EditorSceneData& sceneData, EditorUndoHistory& undoHistory, InspectorState& inspectorState);
+void syncInspectorState(InspectorState& inspectorState, const EditorSceneData& sceneData);
 void markSceneDirty(EditorSceneData& sceneData);
 void syncInspectorTransformBuffers(InspectorState& inspectorState, const EditorSceneData& sceneData);
 void appendConsoleLine(EditorSceneData& sceneData, const std::string& line);
@@ -1863,9 +1894,13 @@ void scriptExpansionSettingsWriteAll(ImGuiContext*, ImGuiSettingsHandler* handle
     outBuf->append("\n");
 }
 
-EditorUiActions drawMainMenu(const EditorSceneData& sceneData) {
+EditorUiActions drawMainMenu(const EditorSceneData& sceneData, bool canUndo, bool canRedo) {
     EditorUiActions actions;
     const char* scenePath = sceneData.scenePath.c_str();
+    const bool canEditObject =
+        sceneData.loaded &&
+        sceneData.selectionKind == EditorSelectionKind::Object &&
+        sceneData.selectedObject != nullptr;
 
     if (ImGui::BeginMainMenuBar()) {
         if (ImGui::BeginMenu("File")) {
@@ -1881,18 +1916,26 @@ EditorUiActions drawMainMenu(const EditorSceneData& sceneData) {
             if (ImGui::MenuItem("Save", "Ctrl+S", false, sceneData.loaded)) {
                 actions.saveScene = true;
             }
-            ImGui::MenuItem("Save As...", nullptr, false, false);
-            ImGui::Separator();
-            ImGui::MenuItem("Exit");
             ImGui::EndMenu();
         }
 
         if (ImGui::BeginMenu("Edit")) {
-            ImGui::MenuItem("Undo", nullptr, false, false);
-            ImGui::MenuItem("Redo", nullptr, false, false);
+            if (ImGui::MenuItem("Undo", "Ctrl+Z", false, canUndo)) {
+                actions.undo = true;
+            }
+            if (ImGui::MenuItem("Redo", "Ctrl+Y", false, canRedo)) {
+                actions.redo = true;
+            }
             ImGui::Separator();
-            ImGui::MenuItem("Duplicate Object", nullptr, false, false);
-            ImGui::MenuItem("Delete Object", nullptr, false, false);
+            if (ImGui::MenuItem("Add Object", nullptr, false, sceneData.loaded)) {
+                actions.addObject = true;
+            }
+            if (ImGui::MenuItem("Duplicate Object", nullptr, false, canEditObject)) {
+                actions.duplicateSelectedObject = true;
+            }
+            if (ImGui::MenuItem("Delete Object", nullptr, false, canEditObject)) {
+                actions.removeSelectedObject = true;
+            }
             ImGui::EndMenu();
         }
 
@@ -1900,18 +1943,6 @@ EditorUiActions drawMainMenu(const EditorSceneData& sceneData) {
             if (ImGui::MenuItem("Reset Layout")) {
                 actions.resetLayout = true;
             }
-            ImGui::MenuItem("Fullscreen", "F11");
-            ImGui::EndMenu();
-        }
-
-        if (ImGui::BeginMenu("Scene")) {
-            if (ImGui::MenuItem("Build...", nullptr, false, sceneData.loaded)) {
-                actions.openBuildModal = true;
-            }
-            ImGui::Separator();
-            ImGui::MenuItem("Add Empty Object", nullptr, false, false);
-            ImGui::MenuItem("Add Mesh Object", nullptr, false, false);
-            ImGui::MenuItem("Validate Scene", nullptr, false, false);
             ImGui::EndMenu();
         }
 
@@ -1930,7 +1961,7 @@ EditorUiActions drawMainMenu(const EditorSceneData& sceneData) {
     return actions;
 }
 
-EditorUiActions drawToolbar(float menuHeight, const EditorSceneData& sceneData, float& outContentTop) {
+EditorUiActions drawToolbar(float menuHeight, const EditorSceneData& sceneData, bool canUndo, bool canRedo, float& outContentTop) {
     EditorUiActions actions;
     ImGuiViewport* viewport = ImGui::GetMainViewport();
     const float toolbarHeight = 44.0f;
@@ -1964,8 +1995,30 @@ EditorUiActions drawToolbar(float menuHeight, const EditorSceneData& sceneData, 
             if (selected) {
                 ImGui::SetItemDefaultFocus();
             }
-        }
-        ImGui::EndCombo();
+    }
+    ImGui::EndCombo();
+    }
+    ImGui::SameLine();
+
+    if (!canUndo) {
+        ImGui::BeginDisabled();
+    }
+    if (ImGui::Button("Undo", ImVec2(72, 0))) {
+        actions.undo = true;
+    }
+    if (!canUndo) {
+        ImGui::EndDisabled();
+    }
+    ImGui::SameLine();
+
+    if (!canRedo) {
+        ImGui::BeginDisabled();
+    }
+    if (ImGui::Button("Redo", ImVec2(72, 0))) {
+        actions.redo = true;
+    }
+    if (!canRedo) {
+        ImGui::EndDisabled();
     }
     ImGui::SameLine();
 
@@ -2304,6 +2357,184 @@ nut::math::Vec3 rotateVectorAroundAxis(const nut::math::Vec3& vector, const nut:
         axisUnit * (dot * (1.0f - c));
 }
 
+EditorObjectData* findObjectByPathRecursive(EditorObjectData& object, const std::string& path) {
+    if (object.path == path) {
+        return &object;
+    }
+    for (std::unique_ptr<EditorObjectData>& child : object.children) {
+        if (EditorObjectData* found = findObjectByPathRecursive(*child, path)) {
+            return found;
+        }
+    }
+    return nullptr;
+}
+
+EditorObjectData* findObjectByPath(EditorSceneData& sceneData, const std::string& path) {
+    for (std::unique_ptr<EditorObjectData>& root : sceneData.roots) {
+        if (EditorObjectData* found = findObjectByPathRecursive(*root, path)) {
+            return found;
+        }
+    }
+    return nullptr;
+}
+
+void captureUndoSnapshot(const EditorSceneData& sceneData, EditorUndoState& undoState) {
+    undoState.available = true;
+    undoState.rootJson = buildSceneJson(sceneData);
+    undoState.scenePath = sceneData.scenePath;
+    undoState.selectionKind = sceneData.selectionKind;
+    undoState.primarySelectionPath = sceneData.selectedObject ? sceneData.selectedObject->path : "";
+    undoState.selectedObjectPaths.clear();
+    undoState.selectedObjectPaths.reserve(sceneData.selectedObjects.size());
+    for (EditorObjectData* selected : sceneData.selectedObjects) {
+        if (selected != nullptr) {
+            undoState.selectedObjectPaths.push_back(selected->path);
+        }
+    }
+    undoState.dirty = sceneData.dirty;
+}
+
+void pushUndoSnapshot(const EditorSceneData& sceneData, EditorUndoHistory& undoHistory) {
+    EditorUndoState snapshot;
+    captureUndoSnapshot(sceneData, snapshot);
+    undoHistory.undoStack.push_back(std::move(snapshot));
+    if (undoHistory.undoStack.size() > EditorUndoHistory::kMaxEntries) {
+        undoHistory.undoStack.erase(undoHistory.undoStack.begin());
+    }
+    undoHistory.redoStack.clear();
+}
+
+bool restoreUndoSnapshot(EditorSceneData& sceneData, const EditorUndoState& undoState) {
+    if (!undoState.available) {
+        return false;
+    }
+
+    EditorSceneData restoredScene;
+    restoredScene.scenePath = undoState.scenePath;
+    restoredScene.assetPaths.push_back(undoState.scenePath);
+    restoredScene.sceneName = undoState.rootJson.get("name").asString("Untitled");
+    restoredScene.rootJson = undoState.rootJson;
+
+    const nut::Json& camera = undoState.rootJson.get("camera");
+    static const float defaultCameraPosition[3] = {0.0f, 0.0f, -5.0f};
+    static const float defaultCameraRotation[3] = {0.0f, 0.0f, 0.0f};
+    if (camera.isObject()) {
+        readVec3(camera.get("position"), restoredScene.camera.position, defaultCameraPosition);
+        readVec3(camera.get("rotation"), restoredScene.camera.rotation, defaultCameraRotation);
+        restoredScene.camera.fov = readFloat(camera.get("fov"), 60.0f);
+    }
+
+    std::set<std::string> uniqueAssets;
+    uniqueAssets.insert(undoState.scenePath);
+    size_t objectCount = 0;
+    size_t scriptCount = 0;
+    const nut::Json& objects = undoState.rootJson.get("objects");
+    if (objects.isArray()) {
+        for (size_t i = 0; i < objects.arrayValue.size(); ++i) {
+            restoredScene.roots.push_back(parseObject(
+                objects.arrayValue[i],
+                uniqueAssets,
+                "",
+                i,
+                objectCount,
+                scriptCount
+            ));
+        }
+    }
+
+    restoredScene.assetPaths.assign(uniqueAssets.begin(), uniqueAssets.end());
+    restoredScene.loaded = true;
+    restoredScene.dirty = undoState.dirty;
+    restoredScene.hasSceneAnalysis = false;
+
+    if (undoState.selectionKind == EditorSelectionKind::SceneCamera) {
+        restoredScene.selectionKind = EditorSelectionKind::SceneCamera;
+    } else if (undoState.selectionKind == EditorSelectionKind::Object) {
+        restoredScene.selectionKind = EditorSelectionKind::Object;
+        for (const std::string& path : undoState.selectedObjectPaths) {
+            if (EditorObjectData* selected = findObjectByPath(restoredScene, path)) {
+                restoredScene.selectedObjects.push_back(selected);
+            }
+        }
+        if (!undoState.primarySelectionPath.empty()) {
+            restoredScene.selectedObject = findObjectByPath(restoredScene, undoState.primarySelectionPath);
+        }
+        if (restoredScene.selectedObject == nullptr && !restoredScene.selectedObjects.empty()) {
+            restoredScene.selectedObject = restoredScene.selectedObjects.back();
+        }
+        if (restoredScene.selectedObject == nullptr) {
+            restoredScene.selectionKind = EditorSelectionKind::None;
+        }
+    }
+
+    std::swap(sceneData.rootJson, restoredScene.rootJson);
+    std::swap(sceneData.scenePath, restoredScene.scenePath);
+    std::swap(sceneData.sceneName, restoredScene.sceneName);
+    std::swap(sceneData.roots, restoredScene.roots);
+    std::swap(sceneData.assetPaths, restoredScene.assetPaths);
+    std::swap(sceneData.selectedObject, restoredScene.selectedObject);
+    std::swap(sceneData.selectedObjects, restoredScene.selectedObjects);
+    sceneData.selectionKind = restoredScene.selectionKind;
+    sceneData.loaded = restoredScene.loaded;
+    sceneData.dirty = restoredScene.dirty;
+    sceneData.hasSceneAnalysis = restoredScene.hasSceneAnalysis;
+    sceneData.camera = restoredScene.camera;
+    ++sceneData.selectionRevision;
+    return true;
+}
+
+void applyUndo(EditorSceneData& sceneData, EditorUndoHistory& undoHistory, InspectorState& inspectorState) {
+    if (undoHistory.undoStack.empty()) {
+        appendConsoleLine(sceneData, "> Undo failed: no undo snapshot is available.");
+        return;
+    }
+
+    EditorUndoState currentSnapshot;
+    captureUndoSnapshot(sceneData, currentSnapshot);
+    undoHistory.redoStack.push_back(std::move(currentSnapshot));
+    if (undoHistory.redoStack.size() > EditorUndoHistory::kMaxEntries) {
+        undoHistory.redoStack.erase(undoHistory.redoStack.begin());
+    }
+
+    EditorUndoState snapshot = std::move(undoHistory.undoStack.back());
+    undoHistory.undoStack.pop_back();
+    if (!restoreUndoSnapshot(sceneData, snapshot)) {
+        appendConsoleLine(sceneData, "> Undo failed: could not restore the previous scene state.");
+        return;
+    }
+
+    updateSceneAnalysis(sceneData, false);
+    syncInspectorState(inspectorState, sceneData);
+    syncInspectorTransformBuffers(inspectorState, sceneData);
+    appendConsoleLine(sceneData, "> Undid the last scene edit.");
+}
+
+void applyRedo(EditorSceneData& sceneData, EditorUndoHistory& undoHistory, InspectorState& inspectorState) {
+    if (undoHistory.redoStack.empty()) {
+        appendConsoleLine(sceneData, "> Redo failed: no redo snapshot is available.");
+        return;
+    }
+
+    EditorUndoState currentSnapshot;
+    captureUndoSnapshot(sceneData, currentSnapshot);
+    undoHistory.undoStack.push_back(std::move(currentSnapshot));
+    if (undoHistory.undoStack.size() > EditorUndoHistory::kMaxEntries) {
+        undoHistory.undoStack.erase(undoHistory.undoStack.begin());
+    }
+
+    EditorUndoState snapshot = std::move(undoHistory.redoStack.back());
+    undoHistory.redoStack.pop_back();
+    if (!restoreUndoSnapshot(sceneData, snapshot)) {
+        appendConsoleLine(sceneData, "> Redo failed: could not restore the next scene state.");
+        return;
+    }
+
+    updateSceneAnalysis(sceneData, false);
+    syncInspectorState(inspectorState, sceneData);
+    syncInspectorTransformBuffers(inspectorState, sceneData);
+    appendConsoleLine(sceneData, "> Redid the last scene edit.");
+}
+
 EditorObjectData* findParentObjectRecursive(EditorObjectData& candidateParent, EditorObjectData* target) {
     for (std::unique_ptr<EditorObjectData>& child : candidateParent.children) {
         if (child.get() == target) {
@@ -2448,6 +2679,7 @@ void drawViewport(
     bool forceLayout,
     EditorSceneData& sceneData,
     InspectorState& inspectorState,
+    EditorUndoHistory& undoHistory,
     ViewportCameraState& viewportCameraState,
     ViewportDisplayState& viewportDisplayState,
     ViewportTransformGizmoState& viewportGizmoState
@@ -2614,10 +2846,16 @@ void drawViewport(
                     viewportCameraState.dragCandidate = false;
                     viewportCameraState.dragging = false;
                 } else if (hasAxisGizmo) {
-                    const int gizmoAxis = pickViewportTranslationGizmoAxis(translationGizmo, mousePos);
+                    const bool uniformScaleHandle =
+                        viewportGizmoState.mode == ViewportGizmoMode::Scale &&
+                        pickViewportScaleUniformHandle(translationGizmo, mousePos);
+                    const int gizmoAxis = uniformScaleHandle
+                        ? 0
+                        : pickViewportTranslationGizmoAxis(translationGizmo, mousePos);
                     if (gizmoAxis >= 0 &&
                         (sceneData.selectionKind == EditorSelectionKind::SceneCamera ||
                          (sceneData.selectionKind == EditorSelectionKind::Object && sceneData.selectedObject != nullptr))) {
+                        pushUndoSnapshot(sceneData, undoHistory);
                         viewportGizmoState.active = true;
                         viewportGizmoState.targetSelectionKind = sceneData.selectionKind;
                         viewportGizmoState.targetSelectionRevision = sceneData.selectionRevision;
@@ -2627,6 +2865,7 @@ void drawViewport(
                         viewportGizmoState.screenOrigin = translationGizmo.screenOrigin;
                         viewportGizmoState.screenEnd = translationGizmo.screenEnds[gizmoAxis];
                         viewportGizmoState.localAxisLength = translationGizmo.axisLocalLengths[gizmoAxis];
+                        viewportGizmoState.uniformScale = uniformScaleHandle;
                         viewportGizmoState.objectSnapshots.clear();
                         viewportGizmoState.groupPivotWorld = nut::math::Vec3(0.0f, 0.0f, 0.0f);
                         for (int i = 0; i < 3; ++i) {
@@ -2736,43 +2975,92 @@ void drawViewport(
                         }
                     } else if (viewportGizmoState.mode == ViewportGizmoMode::Scale) {
                         if (viewportGizmoState.transformSpace == ViewportTransformSpace::Group) {
-                            const float scaleFactor = std::max(0.05f, 1.0f + axisProgress);
+                            float scaleFactor = std::max(0.010f, 1.0f + axisProgress);
                             const nut::math::Vec3 axisDirection = translationGizmo.axisDirections[viewportGizmoState.axis];
+                            const bool multiObjectGroupScale = viewportGizmoState.objectSnapshots.size() > 1;
+                            if (!multiObjectGroupScale && viewportGizmoState.uniformScale) {
+                                float minUniformFactor = 0.010f;
+                                for (const ViewportTransformGizmoState::ObjectSnapshot& snapshot : viewportGizmoState.objectSnapshots) {
+                                    if (snapshot.object == nullptr) {
+                                        continue;
+                                    }
+                                    for (int i = 0; i < 3; ++i) {
+                                        if (snapshot.scale[i] > 0.0f) {
+                                            minUniformFactor = std::max(minUniformFactor, 0.010f / snapshot.scale[i]);
+                                        }
+                                    }
+                                }
+                                scaleFactor = std::max(scaleFactor, minUniformFactor);
+                            }
                             for (const ViewportTransformGizmoState::ObjectSnapshot& snapshot : viewportGizmoState.objectSnapshots) {
                                 if (snapshot.object == nullptr) {
                                     continue;
                                 }
 
                                 const nut::math::Vec3 offset = snapshot.worldPosition - viewportGizmoState.groupPivotWorld;
-                                const float axisDistance =
-                                    offset.x * axisDirection.x +
-                                    offset.y * axisDirection.y +
-                                    offset.z * axisDirection.z;
-                                const nut::math::Vec3 parallel = axisDirection * axisDistance;
-                                const nut::math::Vec3 perpendicular = offset - parallel;
-                                const nut::math::Vec3 scaledWorldPosition =
-                                    viewportGizmoState.groupPivotWorld + perpendicular + parallel * scaleFactor;
+                                nut::math::Vec3 scaledWorldPosition;
+                                if (viewportGizmoState.uniformScale) {
+                                    scaledWorldPosition = viewportGizmoState.groupPivotWorld + offset * scaleFactor;
+                                } else {
+                                    const float axisDistance =
+                                        offset.x * axisDirection.x +
+                                        offset.y * axisDirection.y +
+                                        offset.z * axisDirection.z;
+                                    const nut::math::Vec3 parallel = axisDirection * axisDistance;
+                                    const nut::math::Vec3 perpendicular = offset - parallel;
+                                    scaledWorldPosition =
+                                        viewportGizmoState.groupPivotWorld + perpendicular + parallel * scaleFactor;
+                                }
                                 const nut::math::Mat4 inverseParentWorld = invertAffineMatrix(snapshot.parentWorldMatrix);
                                 const nut::math::Vec3 localPosition = inverseParentWorld * scaledWorldPosition;
 
                                 snapshot.object->position[0] = localPosition.x;
                                 snapshot.object->position[1] = localPosition.y;
                                 snapshot.object->position[2] = localPosition.z;
-                                snapshot.object->scale[viewportGizmoState.axis] = std::max(
-                                    0.05f,
-                                    snapshot.scale[viewportGizmoState.axis] * scaleFactor
-                                );
+                                if (!multiObjectGroupScale) {
+                                    if (viewportGizmoState.uniformScale) {
+                                        for (int i = 0; i < 3; ++i) {
+                                            snapshot.object->scale[i] = std::max(0.010f, snapshot.scale[i] * scaleFactor);
+                                        }
+                                    } else {
+                                        snapshot.object->scale[viewportGizmoState.axis] = std::max(
+                                            0.010f,
+                                            snapshot.scale[viewportGizmoState.axis] * scaleFactor
+                                        );
+                                    }
+                                }
                             }
                         } else {
                             const float deltaScale = axisProgress;
+                            float uniformScaleFactor = std::max(0.010f, 1.0f + axisProgress);
+                            if (viewportGizmoState.uniformScale) {
+                                float minUniformFactor = 0.010f;
+                                for (const ViewportTransformGizmoState::ObjectSnapshot& snapshot : viewportGizmoState.objectSnapshots) {
+                                    if (snapshot.object == nullptr) {
+                                        continue;
+                                    }
+                                    for (int i = 0; i < 3; ++i) {
+                                        if (snapshot.scale[i] > 0.0f) {
+                                            minUniformFactor = std::max(minUniformFactor, 0.010f / snapshot.scale[i]);
+                                        }
+                                    }
+                                }
+                                uniformScaleFactor = std::max(uniformScaleFactor, minUniformFactor);
+                            }
                             for (const ViewportTransformGizmoState::ObjectSnapshot& snapshot : viewportGizmoState.objectSnapshots) {
                                 if (snapshot.object == nullptr) {
                                     continue;
                                 }
-                                snapshot.object->scale[viewportGizmoState.axis] = std::max(
-                                    0.05f,
-                                    snapshot.scale[viewportGizmoState.axis] + deltaScale
-                                );
+                                if (viewportGizmoState.uniformScale) {
+                                    for (int i = 0; i < 3; ++i) {
+                                        snapshot.object->scale[i] = std::max(0.010f, snapshot.scale[i] * uniformScaleFactor);
+                                    }
+                                } else {
+                                    snapshot.object->scale[viewportGizmoState.axis] = std::max(
+                                        0.010f,
+                                        snapshot.scale[viewportGizmoState.axis] + deltaScale
+                                    );
+                                }
                             }
                         }
                     } else if (viewportGizmoState.mode == ViewportGizmoMode::Rotate) {
@@ -2817,6 +3105,7 @@ void drawViewport(
                 viewportGizmoState.targetSelectionKind = EditorSelectionKind::None;
                 viewportGizmoState.targetSelectionRevision = 0;
                 viewportGizmoState.axis = -1;
+                viewportGizmoState.uniformScale = false;
                 viewportGizmoState.object = nullptr;
                 viewportGizmoState.objectSnapshots.clear();
             }
@@ -3660,6 +3949,18 @@ int pickViewportTranslationGizmoAxis(
     return bestAxis;
 }
 
+bool pickViewportScaleUniformHandle(
+    const ViewportTranslationGizmoInfo& gizmo,
+    ImVec2 mousePos
+) {
+    constexpr float kUniformHalfExtentPixels = 6.0f;
+    return
+        mousePos.x >= gizmo.screenOrigin.x - kUniformHalfExtentPixels &&
+        mousePos.x <= gizmo.screenOrigin.x + kUniformHalfExtentPixels &&
+        mousePos.y >= gizmo.screenOrigin.y - kUniformHalfExtentPixels &&
+        mousePos.y <= gizmo.screenOrigin.y + kUniformHalfExtentPixels;
+}
+
 void drawViewportTranslationGizmo(
     ImDrawList* drawList,
     const EditorSceneData&,
@@ -3727,11 +4028,19 @@ void drawViewportScaleGizmo(
         motif::AxisBlue
     };
 
-    const ImVec2 squareHalfExtents(2.5f, 2.5f);
+    const ImVec2 squareHalfExtents(4.0f, 4.0f);
     drawList->AddRectFilled(
         ImVec2(gizmo.screenOrigin.x - squareHalfExtents.x, gizmo.screenOrigin.y - squareHalfExtents.y),
         ImVec2(gizmo.screenOrigin.x + squareHalfExtents.x, gizmo.screenOrigin.y + squareHalfExtents.y),
         motif::PanelLight
+    );
+    drawList->AddRect(
+        ImVec2(gizmo.screenOrigin.x - squareHalfExtents.x, gizmo.screenOrigin.y - squareHalfExtents.y),
+        ImVec2(gizmo.screenOrigin.x + squareHalfExtents.x, gizmo.screenOrigin.y + squareHalfExtents.y),
+        motif::PanelShadow,
+        0.0f,
+        0,
+        1.0f
     );
 
     for (int axis = 0; axis < 3; ++axis) {
@@ -4327,6 +4636,69 @@ void addObjectFromHierarchy(EditorSceneData& sceneData) {
     updateSceneAnalysis(sceneData, false);
 }
 
+std::unique_ptr<EditorObjectData> cloneEditorObject(const EditorObjectData& source) {
+    std::unique_ptr<EditorObjectData> clone = std::make_unique<EditorObjectData>();
+    clone->name = source.name + " Copy";
+    clone->meshPath = source.meshPath;
+    for (int i = 0; i < 3; ++i) {
+        clone->position[i] = source.position[i];
+        clone->rotation[i] = source.rotation[i];
+        clone->scale[i] = source.scale[i];
+    }
+    clone->scripts = source.scripts;
+    for (const std::unique_ptr<EditorObjectData>& child : source.children) {
+        clone->children.push_back(cloneEditorObject(*child));
+    }
+    return clone;
+}
+
+void duplicateSelectedObjectFromHierarchy(EditorSceneData& sceneData) {
+    if (!sceneData.loaded) {
+        appendConsoleLine(sceneData, "> Duplicate Object failed: no scene is currently loaded.");
+        return;
+    }
+    if (sceneData.selectionKind != EditorSelectionKind::Object || sceneData.selectedObject == nullptr) {
+        appendConsoleLine(sceneData, "> Duplicate Object failed: no object is selected.");
+        return;
+    }
+
+    EditorObjectData* selectedObject = sceneData.selectedObject;
+    EditorObjectData* newSelection = nullptr;
+    EditorObjectData* parentObject = findParentObject(sceneData, selectedObject);
+
+    auto duplicateInList = [&](auto& objects) {
+        auto it = std::find_if(
+            objects.begin(),
+            objects.end(),
+            [selectedObject](const std::unique_ptr<EditorObjectData>& object) {
+                return object.get() == selectedObject;
+            }
+        );
+        if (it == objects.end()) {
+            return false;
+        }
+
+        std::unique_ptr<EditorObjectData> duplicate = cloneEditorObject(*selectedObject);
+        newSelection = duplicate.get();
+        objects.insert(it + 1, std::move(duplicate));
+        return true;
+    };
+
+    const bool duplicated = parentObject != nullptr
+        ? duplicateInList(parentObject->children)
+        : duplicateInList(sceneData.roots);
+    if (!duplicated || newSelection == nullptr) {
+        appendConsoleLine(sceneData, "> Duplicate Object failed: could not place the duplicated object.");
+        return;
+    }
+
+    refreshSceneObjectPaths(sceneData);
+    selectSingleObject(sceneData, newSelection);
+    markSceneDirty(sceneData);
+    updateSceneAnalysis(sceneData, false);
+    appendConsoleLine(sceneData, "> Duplicated selected object.");
+}
+
 void removeSelectedObjectFromHierarchy(EditorSceneData& sceneData) {
     if (!sceneData.loaded) {
         appendConsoleLine(sceneData, "> Remove Object failed: no scene is currently loaded.");
@@ -4897,7 +5269,13 @@ bool drawSingleFloatField(const char* label, float& value, char buffer[32], floa
     return changed;
 }
 
-void drawInspector(const EditorLayout& layout, bool forceLayout, EditorSceneData& sceneData, InspectorState& inspectorState) {
+void drawInspector(
+    const EditorLayout& layout,
+    bool forceLayout,
+    EditorSceneData& sceneData,
+    InspectorState& inspectorState,
+    EditorUndoHistory& undoHistory
+) {
     applyPanelLayout(layout.inspectorPos, layout.inspectorSize, forceLayout);
 
     ImGui::Begin("Inspector");
@@ -4910,6 +5288,13 @@ void drawInspector(const EditorLayout& layout, bool forceLayout, EditorSceneData
 
     syncInspectorState(inspectorState, sceneData);
     const float inspectorLabelWidth = 72.0f;
+    bool undoCaptured = false;
+    auto prepareUndo = [&]() {
+        if (!undoCaptured) {
+            pushUndoSnapshot(sceneData, undoHistory);
+            undoCaptured = true;
+        }
+    };
 
     if (sceneData.selectionKind == EditorSelectionKind::SceneCamera) {
         ImGui::BeginDisabled();
@@ -4917,12 +5302,15 @@ void drawInspector(const EditorLayout& layout, bool forceLayout, EditorSceneData
         ImGui::EndDisabled();
 
         if (drawVec3TextFields("Position", sceneData.camera.position, inspectorState.positionBuffers)) {
+            prepareUndo();
             markSceneDirty(sceneData);
         }
         if (drawVec3TextFields("Rotation", sceneData.camera.rotation, inspectorState.rotationBuffers)) {
+            prepareUndo();
             markSceneDirty(sceneData);
         }
         if (drawSingleFloatField("FOV", sceneData.camera.fov, inspectorState.fovBuffer, inspectorLabelWidth)) {
+            prepareUndo();
             markSceneDirty(sceneData);
         }
 
@@ -4950,6 +5338,7 @@ void drawInspector(const EditorLayout& layout, bool forceLayout, EditorSceneData
     ImGui::SameLine();
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
     if (ImGui::InputText("##Name", inspectorState.nameBuffer, sizeof(inspectorState.nameBuffer))) {
+        prepareUndo();
         object.name = inspectorState.nameBuffer;
         markSceneDirty(sceneData);
     }
@@ -4966,6 +5355,7 @@ void drawInspector(const EditorLayout& layout, bool forceLayout, EditorSceneData
         const bool emptySelected = object.meshPath.empty();
         if (ImGui::Selectable("(empty)", emptySelected)) {
             if (!object.meshPath.empty()) {
+                prepareUndo();
                 object.meshPath.clear();
                 markSceneDirty(sceneData);
                 updateSceneAnalysis(sceneData, false);
@@ -4980,6 +5370,7 @@ void drawInspector(const EditorLayout& layout, bool forceLayout, EditorSceneData
             }
             if (ImGui::Selectable(meshPath.c_str(), selected)) {
                 if (object.meshPath != meshPath) {
+                    prepareUndo();
                     object.meshPath = meshPath;
                     markSceneDirty(sceneData);
                     updateSceneAnalysis(sceneData, false);
@@ -4996,12 +5387,15 @@ void drawInspector(const EditorLayout& layout, bool forceLayout, EditorSceneData
     }
 
     if (drawVec3TextFields("Position", object.position, inspectorState.positionBuffers)) {
+        prepareUndo();
         markSceneDirty(sceneData);
     }
     if (drawVec3TextFields("Rotation", object.rotation, inspectorState.rotationBuffers)) {
+        prepareUndo();
         markSceneDirty(sceneData);
     }
     if (drawVec3TextFields("Scale", object.scale, inspectorState.scaleBuffers)) {
+        prepareUndo();
         markSceneDirty(sceneData);
     }
 
@@ -5013,6 +5407,7 @@ void drawInspector(const EditorLayout& layout, bool forceLayout, EditorSceneData
     if (ImGui::BeginPopup("Add Script")) {
         for (const char* scriptType : availableScriptTypes()) {
             if (ImGui::MenuItem(scriptType)) {
+                prepareUndo();
                 object.scripts.push_back(makeDefaultScript(scriptType));
                 markSceneDirty(sceneData);
                 updateSceneAnalysis(sceneData, false);
@@ -5031,6 +5426,7 @@ void drawInspector(const EditorLayout& layout, bool forceLayout, EditorSceneData
             const std::string sourcePath = getScriptSourcePath(script.type);
             ImGui::PushID(static_cast<int>(i));
             if (drawScriptCard(script, sourcePath, inspectorLabelWidth)) {
+                prepareUndo();
                 appendConsoleLine(sceneData, "> Removed script: " + script.type);
                 object.scripts.erase(object.scripts.begin() + static_cast<std::ptrdiff_t>(i));
                 markSceneDirty(sceneData);
@@ -5307,6 +5703,7 @@ int main() {
     bool forceLayout = !hasSavedLayout;
     EditorSceneData sceneData;
     InspectorState inspectorState;
+    EditorUndoHistory undoHistory;
     ViewportCameraState viewportCameraState;
     ViewportDisplayState viewportDisplayState;
     ViewportTransformGizmoState viewportGizmoState;
@@ -5322,6 +5719,8 @@ int main() {
         : availableEditorScenes().front().second;
     const std::string scenePathOnDisk = std::string(NUT_PROJECT_ROOT) + "/" + scenePath;
     loadSceneData(sceneData, scenePathOnDisk, scenePath);
+    undoHistory.undoStack.clear();
+    undoHistory.redoStack.clear();
     syncViewportCameraToScene(sceneData, viewportCameraState);
     applyViewportSettingsFromConfig(buildSettings, viewportCameraState, viewportDisplayState);
     buildSettings.selectedScenePath = scenePath;
@@ -5337,6 +5736,12 @@ int main() {
             forceLayout = true;
         }
 
+        if (sceneData.loaded && IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_Z)) {
+            applyUndo(sceneData, undoHistory, inspectorState);
+        }
+        if (sceneData.loaded && IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_Y)) {
+            applyRedo(sceneData, undoHistory, inspectorState);
+        }
         if (sceneData.loaded && IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_S)) {
             saveSceneToDisk(sceneData);
         }
@@ -5349,19 +5754,46 @@ int main() {
         rlImGuiBegin();
         drawDesktopPattern();
         float menuHeight = ImGui::GetFrameHeight();
-        const EditorUiActions menuActions = drawMainMenu(sceneData);
+        const EditorUiActions menuActions = drawMainMenu(sceneData, !undoHistory.undoStack.empty(), !undoHistory.redoStack.empty());
         if (menuActions.resetLayout) {
             forceLayout = true;
+        }
+        if (menuActions.undo) {
+            applyUndo(sceneData, undoHistory, inspectorState);
+        }
+        if (menuActions.redo) {
+            applyRedo(sceneData, undoHistory, inspectorState);
         }
         if (menuActions.saveScene) {
             saveSceneToDisk(sceneData);
         }
-        if (menuActions.openBuildModal) {
-            buildModalState.openRequested = true;
+        if (menuActions.addObject) {
+            pushUndoSnapshot(sceneData, undoHistory);
+            addObjectFromHierarchy(sceneData);
+        }
+        if (menuActions.duplicateSelectedObject) {
+            pushUndoSnapshot(sceneData, undoHistory);
+            duplicateSelectedObjectFromHierarchy(sceneData);
+        }
+        if (menuActions.removeSelectedObject) {
+            pushUndoSnapshot(sceneData, undoHistory);
+            removeSelectedObjectFromHierarchy(sceneData);
         }
 
         float contentTop = 0.0f;
-        const EditorUiActions toolbarActions = drawToolbar(menuHeight, sceneData, contentTop);
+        const EditorUiActions toolbarActions = drawToolbar(
+            menuHeight,
+            sceneData,
+            !undoHistory.undoStack.empty(),
+            !undoHistory.redoStack.empty(),
+            contentTop
+        );
+        if (toolbarActions.undo) {
+            applyUndo(sceneData, undoHistory, inspectorState);
+        }
+        if (toolbarActions.redo) {
+            applyRedo(sceneData, undoHistory, inspectorState);
+        }
         if (toolbarActions.saveScene) {
             saveSceneToDisk(sceneData);
         }
@@ -5370,6 +5802,8 @@ int main() {
                 appendConsoleLine(sceneData, "> Finish the current background task before discarding scene changes.");
             } else {
                 if (reloadCurrentSceneFromDisk(sceneData)) {
+                    undoHistory.undoStack.clear();
+                    undoHistory.redoStack.clear();
                     syncViewportCameraToScene(sceneData, viewportCameraState);
                     if (buildSettings.viewportCameraSaved) {
                         applyViewportSettingsFromConfig(buildSettings, viewportCameraState, viewportDisplayState);
@@ -5391,6 +5825,8 @@ int main() {
             } else {
                 const std::string requestedScenePathOnDisk = toAbsoluteProjectPath(requestedScenePath);
                 loadSceneData(sceneData, requestedScenePathOnDisk, requestedScenePath);
+                undoHistory.undoStack.clear();
+                undoHistory.redoStack.clear();
                 syncViewportCameraToScene(sceneData, viewportCameraState);
                 buildSettings.selectedScenePath = requestedScenePath;
                 captureViewportSettings(buildSettings, viewportCameraState, viewportDisplayState);
@@ -5403,23 +5839,27 @@ int main() {
         EditorLayout layout = calculateResponsiveLayout(contentTop);
         const EditorUiActions hierarchyActions = drawHierarchy(layout, forceLayout, sceneData);
         if (hierarchyActions.addObject) {
+            pushUndoSnapshot(sceneData, undoHistory);
             addObjectFromHierarchy(sceneData);
         }
         if (hierarchyActions.removeSelectedObject) {
+            pushUndoSnapshot(sceneData, undoHistory);
             removeSelectedObjectFromHierarchy(sceneData);
         }
         if (hierarchyActions.moveSelectedObjectUp) {
+            pushUndoSnapshot(sceneData, undoHistory);
             moveSelectedObjectInHierarchy(sceneData, -1);
         }
         if (hierarchyActions.moveSelectedObjectDown) {
+            pushUndoSnapshot(sceneData, undoHistory);
             moveSelectedObjectInHierarchy(sceneData, 1);
         }
-        drawViewport(layout, forceLayout, sceneData, inspectorState, viewportCameraState, viewportDisplayState, viewportGizmoState);
+        drawViewport(layout, forceLayout, sceneData, inspectorState, undoHistory, viewportCameraState, viewportDisplayState, viewportGizmoState);
         if (viewportSettingsDiffer(buildSettings, viewportCameraState, viewportDisplayState)) {
             captureViewportSettings(buildSettings, viewportCameraState, viewportDisplayState);
             saveBuildSettings(buildSettings);
         }
-        drawInspector(layout, forceLayout, sceneData, inspectorState);
+        drawInspector(layout, forceLayout, sceneData, inspectorState, undoHistory);
         drawAssetsConsole(layout, forceLayout, sceneData);
         const EditorUiActions modalActions = drawBuildModal(buildModalState, sceneData, buildSettings, backgroundTask);
         forceLayout = false;
