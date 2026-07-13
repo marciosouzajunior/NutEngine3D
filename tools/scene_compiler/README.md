@@ -8,8 +8,9 @@ For the full authored-assets to runtime-assets flow, see:
 
 ## Purpose
 
-Reads a source `.nutscene` from `assets/` and writes a generated header with
-the compiled scene blob ready to be included in firmware.
+Reads a source `.nutscene` from `assets/` and writes generated headers with
+the compiled scene blob and derived Nano limits ready to be included in
+firmware.
 
 ## Build
 
@@ -24,6 +25,11 @@ cmake --build build/scene_compiler
 build/scene_compiler/NutSceneCompiler assets/scenes/demo.nutscene build/assets/nano/demo_scene.h
 ```
 
+That command generates:
+
+- `build/assets/nano/demo_scene.h`
+- `build/assets/nano/demo_scene_limits.h`
+
 ## Windows helpers
 
 On Windows, you can use:
@@ -33,7 +39,10 @@ On Windows, you can use:
 - `tools/scene_compiler/run_scene.bat`
 
 The run helper compiles `assets/scenes/demo.nutscene` into
-`build/assets/nano/demo_scene.h`.
+the normal Nano output pair:
+
+- `build/assets/nano/demo_scene.h`
+- `build/assets/nano/demo_scene_limits.h`
 
 The generic scene helper lets you replace the Nano scene header with any
 authored scene:

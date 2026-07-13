@@ -61,31 +61,9 @@ struct Header {
     float cameraFovDegrees = 60.0f;
 };
 
-struct MeshRecord {
-    // Per-mesh summary. The actual vertex/edge data lives later in the blob.
-    uint16_t vertexCount;
-    uint16_t edgeCount;
-};
-
-struct ObjectRecord {
-    // Per-object transform/hierarchy metadata plus the range of script records
-    // that belong to this object.
-    uint16_t nameOffset;
-    int16_t parentIndex;
-    int16_t meshIndex;
-    uint16_t firstScriptIndex;
-    uint16_t scriptCount;
-    float position[3];
-    float rotation[3];
-    float scale[3];
-};
-
-struct ScriptRecord {
-    // Per-script metadata pointing into the packed script-config region.
-    uint16_t scriptId;
-    uint16_t configOffset;
-    uint16_t configSize;
-};
+using MeshRecord = SceneBinaryLoader::MeshRecord;
+using ObjectRecord = SceneBinaryLoader::ObjectRecord;
+using ScriptRecord = SceneBinaryLoader::ScriptRecord;
 
 class ByteReader {
 private:
@@ -177,31 +155,22 @@ public:
 };
 
 #ifdef ARDUINO
-struct LoadWorkspace {
-    // Temporary records used only while decoding the scene. The Nano target
-    // supplies this memory so it can become renderer storage after loading.
-    // Keep this type free of default member initializers. Value-initializing
-    // these arrays made AVR emit a large SRAM-backed initialization template.
-    uint8_t* stringTable;
-    uint16_t stringTableSize;
-    MeshRecord meshRecords[NUT_MAX_MESHES];
-    uint16_t meshRecordCount;
-    ObjectRecord objectRecords[NUT_MAX_OBJECTS];
-    uint16_t objectRecordCount;
-    ScriptRecord scriptRecords[NUT_MAX_SCRIPT_RECORDS];
-    uint16_t scriptRecordCount;
-    GameObject* objects[NUT_MAX_OBJECTS];
-    uint16_t objectCount;
-};
+using LoadWorkspace = SceneBinaryLoader::LoadWorkspace;
 
-// Object names point into this table after loading, so unlike LoadWorkspace it
-// must remain alive for the whole scene lifetime.
+// Persistent storage for all object names in the active Nano scene.
+//
+// The scene blob does not repeat a complete string in every object record.
+// Instead it contains one packed block such as "Cube\0Sphere\0", and each
+// record contains a 16-bit offset into that block. During loading we copy the
+// block from PROGMEM here, then GameObject::m_name points directly at the
+// appropriate byte. No per-name allocation or copy is needed.
+//
+// Unlike LoadWorkspace, this array cannot share memory with the renderer:
+// those GameObject pointers remain valid only while this table stays alive.
 static uint8_t g_sceneStringTable[NUT_MAX_STRING_TABLE_BYTES];
 
-static_assert(
-    sizeof(LoadWorkspace) <= SceneBinaryLoader::NANO_SCRATCH_BYTES,
-    "Nano scene-loader scratch is too small for the configured runtime limits."
-);
+static_assert(sizeof(LoadWorkspace) == SceneBinaryLoader::NANO_SCRATCH_BYTES,
+    "Nano scene-loader scratch must match the configured loader workspace.");
 #else
 using StringTableBuffer = std::vector<uint8_t>;
 using MeshRecordBuffer = std::vector<MeshRecord>;
@@ -241,11 +210,16 @@ bool readHeader(ByteReader& reader, Header& header) {
 }
 
 #ifdef ARDUINO
-const char* readStringFromTable(const LoadWorkspace& workspace, uint16_t offset) {
+const char* readStringFromTable(
+    const SceneBinaryLoader::LoadWorkspace& workspace,
+    uint16_t offset
+) {
     if (offset >= workspace.stringTableSize) {
         return "GameObject";
     }
 
+    // The offset lands on the first character of a null-terminated name.
+    // Returning a pointer avoids constructing or allocating another string.
     return reinterpret_cast<const char*>(&workspace.stringTable[offset]);
 }
 #else
@@ -262,7 +236,7 @@ std::string readStringFromTable(const StringTableBuffer& table, uint16_t offset)
 bool decodeScriptConfig(
     const uint8_t* data,
     size_t size,
-    const ScriptRecord& scriptRecord,
+    const SceneBinaryLoader::ScriptRecord& scriptRecord,
     uint16_t objectIndex,
     CompiledScriptInstance& instance
 ) {
@@ -363,7 +337,9 @@ bool SceneBinaryLoader::load(
     stringTable.resize(header.stringTableSize);
 #endif
     for (uint16_t i = 0; i < header.stringTableSize; ++i) {
-        // The string table stores object names compactly in one contiguous blob.
+        // Copy the packed names once from the flash-backed scene reader into
+        // persistent SRAM. Object records decoded later refer to these bytes by
+        // offset; after object creation, their name pointers refer here directly.
         uint8_t byte = 0;
         if (!reader.readU8(byte)) {
             logMessage(NUT_LOG_LITERAL("Could not read string table."));

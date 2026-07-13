@@ -1,11 +1,11 @@
 #pragma once
 
 #include "../../../src/render/Graphics.h"
-#include "NutNanoDisplayAdapter.h"
+#include "NanoDisplayAdapter.h"
 
 #include <Arduino.h>
 
-// NutNanoGraphics is the Nano-side implementation of the generic Graphics API.
+// NanoGraphics is the Nano-side implementation of the generic Graphics API.
 //
 // Pipeline role:
 // - expose the OLED dimensions and per-frame delta time to the engine
@@ -14,14 +14,14 @@
 //
 // This layer does not decide what to draw. It sits between the Nano renderer
 // and the low-level SSD1306 adapter.
-class NutNanoGraphics : public nut::Graphics {
+class NanoGraphics : public nut::Graphics {
 private:
-    NutNanoDisplayAdapter* m_display;
+    NanoDisplayAdapter* m_display;
     unsigned long m_lastFrameMs;
     float m_deltaTime;
 
 public:
-    explicit NutNanoGraphics(NutNanoDisplayAdapter* display)
+    explicit NanoGraphics(NanoDisplayAdapter* display)
         : m_display(display), m_lastFrameMs(0), m_deltaTime(1.0f / 30.0f) {}
 
     // Initialize the display side of the pipeline before frames begin.

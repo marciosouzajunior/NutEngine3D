@@ -60,6 +60,18 @@ if(NUT_BUILD_SCENE_EDITOR)
     )
     FetchContent_MakeAvailable(imgui rlimgui imgui_color_text_edit)
 
+    # Keep the script preview usable inside the scene editor:
+    # allow horizontal scroll only when needed instead of forcing it visible.
+    set(NUT_TEXT_EDITOR_SOURCE "${imgui_color_text_edit_SOURCE_DIR}/TextEditor.cpp")
+    file(READ "${NUT_TEXT_EDITOR_SOURCE}" NUT_TEXT_EDITOR_CPP)
+    string(REPLACE
+        "ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_AlwaysHorizontalScrollbar | ImGuiWindowFlags_NoMove"
+        "ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_NoMove"
+        NUT_TEXT_EDITOR_CPP
+        "${NUT_TEXT_EDITOR_CPP}"
+    )
+    file(WRITE "${NUT_TEXT_EDITOR_SOURCE}" "${NUT_TEXT_EDITOR_CPP}")
+
     add_library(imgui STATIC
         ${imgui_SOURCE_DIR}/imgui.cpp
         ${imgui_SOURCE_DIR}/imgui_draw.cpp
@@ -85,7 +97,9 @@ if(NUT_BUILD_SCENE_EDITOR)
 
     add_executable(NutSceneEditor
         tools/scene_editor/main.cpp
+        tools/scene_compiler/ScenePipeline.cpp
         src/scene/Json.cpp
+        src/core/ObjLoader.cpp
     )
     target_include_directories(NutSceneEditor PRIVATE src ${CMAKE_SOURCE_DIR})
     target_link_libraries(NutSceneEditor PRIVATE raylib imgui rlimgui imgui_color_text_edit)

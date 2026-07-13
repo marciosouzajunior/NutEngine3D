@@ -26,7 +26,7 @@ void updateScripts(RuntimeScene& scene, float deltaTime) {
             PlayerMoveScript::update(*instance, *object, scene.inputState(), deltaTime);
             break;
         case TunnelRunScript::kScriptId:
-            TunnelRunScript::update(*instance, *object, scene.inputState(), deltaTime);
+            TunnelRunScript::update(*instance, scene, scene.inputState(), deltaTime);
             break;
         default:
             break;

@@ -76,11 +76,11 @@ config   = baseSpeed, speedStep, collisionRadius
 
 ### 3. Firmware compilation
 
-The normal C++ compiler separately compiles `TunnelRunScript.cpp` and the other
-script modules. On Nano they are included by
-`targets/nano/src/NutEngineRuntime.cpp`; desktop lists them in the root
-`CMakeLists.txt`. Their machine code becomes part of the final executable or
-`firmware.hex`.
+The normal C++ compiler compiles `TunnelRunScript.cpp` and the other selected
+script modules. The Nano selection is explicit in
+`targets/nano/src/NanoEngineRuntime.cpp`; desktop lists its available scripts in
+the root `CMakeLists.txt`. Their machine code becomes part of the final
+executable or `firmware.hex`.
 
 ### 4. Scene loading
 
@@ -141,7 +141,8 @@ To add another native script:
 3. Add its name/ID mapping to `ScriptCatalog.h`.
 4. Add its property serialization to `NutSceneCompiler`.
 5. Add one dispatch case to `GameScriptDispatcher.cpp`.
-6. Add the `.cpp` to desktop CMake and Nano `NutEngineRuntime.cpp`.
+6. Add the `.cpp` to `NanoEngineRuntime.cpp` and to desktop `CMakeLists.txt` if
+   that target should simulate scenes using the script.
 7. Use its type and properties in a `.nutscene` file.
 8. Rebuild the scene compiler, regenerate `demo_scene.h`, then rebuild firmware.
 

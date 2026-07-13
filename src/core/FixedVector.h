@@ -61,4 +61,52 @@ public:
     }
 };
 
+// A scene with no hierarchy should not reserve a fake child-pointer array in
+// every GameObject. Empty C++ arrays are not portable, so capacity zero needs
+// an explicit representation with no items and no size counter.
+template <typename T>
+class FixedVector<T, 0> {
+public:
+    bool push_back(const T&) {
+        return false;
+    }
+
+    void clear() {}
+    void reserve(size_t) {}
+
+    size_t size() const {
+        return 0;
+    }
+
+    bool empty() const {
+        return true;
+    }
+
+    // These operators only keep the interface compatible with FixedVector.
+    // They must never execute: every valid caller checks size(), which is zero.
+    T& operator[](size_t) {
+        return *static_cast<T*>(nullptr);
+    }
+
+    const T& operator[](size_t) const {
+        return *static_cast<const T*>(nullptr);
+    }
+
+    T* begin() {
+        return nullptr;
+    }
+
+    const T* begin() const {
+        return nullptr;
+    }
+
+    T* end() {
+        return nullptr;
+    }
+
+    const T* end() const {
+        return nullptr;
+    }
+};
+
 } // namespace nut

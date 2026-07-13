@@ -7,6 +7,9 @@ namespace nut {
 // These limits define the fixed-size runtime budgets used by the engine.
 // The storage model stays the same on every platform; only the capacities change.
 #ifdef ARDUINO
+// This header intentionally does not know where target-specific NUT_CFG_*
+// macros come from. The Nano target may include a generated scene-limits
+// header before the core, while these defaults keep fallback builds working.
 #ifndef NUT_CFG_MAX_ROOT_OBJECTS
 #define NUT_CFG_MAX_ROOT_OBJECTS 1
 #endif
@@ -47,6 +50,8 @@ namespace nut {
 #define NUT_CFG_SCRIPT_ARENA_BYTES 64
 #endif
 
+// The rest of the core should use NUT_MAX_* only. That keeps generated build
+// config, target overrides, and default values behind one small interface.
 constexpr size_t NUT_MAX_ROOT_OBJECTS = NUT_CFG_MAX_ROOT_OBJECTS;
 constexpr size_t NUT_MAX_CHILDREN_PER_OBJECT = NUT_CFG_MAX_CHILDREN_PER_OBJECT;
 constexpr size_t NUT_MAX_SCRIPTS_PER_OBJECT = NUT_CFG_MAX_SCRIPTS_PER_OBJECT;

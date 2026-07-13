@@ -18,43 +18,41 @@
           "speedStep": 0.12,
           "collisionRadius": 1.25
         }
-      ],
-      "children": [
+      ]
+    },
+    {
+      "name": "Player",
+      "mesh": "assets/models/cube.obj",
+      "position": [0, 0, 0],
+      "rotation": [0, 0, 0],
+      "scale": [0.11, 0.11, 0.11],
+      "scripts": [
         {
-          "name": "Player",
-          "mesh": "assets/models/cube.obj",
-          "position": [0, 0, 0],
-          "rotation": [0, 0, 0],
-          "scale": [0.11, 0.11, 0.11],
-          "scripts": [
-            {
-              "type": "PlayerMoveScript",
-              "unitsPerSecond": [4.8, 0, 0]
-            }
-          ]
-        },
-        {
-          "name": "A",
-          "mesh": "assets/models/cube.obj",
-          "position": [-4, 0, 8],
-          "rotation": [0, 0, 0],
-          "scale": [0.14, 0.14, 0.14]
-        },
-        {
-          "name": "B",
-          "mesh": "assets/models/cube.obj",
-          "position": [0, 0, 16],
-          "rotation": [0, 0, 0],
-          "scale": [0.14, 0.14, 0.14]
-        },
-        {
-          "name": "C",
-          "mesh": "assets/models/cube.obj",
-          "position": [4, 0, 24],
-          "rotation": [0, 0, 0],
-          "scale": [0.14, 0.14, 0.14]
+          "type": "PlayerMoveScript",
+          "unitsPerSecond": [4.8, 0, 0]
         }
       ]
+    },
+    {
+      "name": "A",
+      "mesh": "assets/models/cube.obj",
+      "position": [-4, 0, 8],
+      "rotation": [0, 0, 0],
+      "scale": [0.14, 0.14, 0.14]
+    },
+    {
+      "name": "B",
+      "mesh": "assets/models/cube.obj",
+      "position": [0, 0, 16],
+      "rotation": [0, 0, 0],
+      "scale": [0.14, 0.14, 0.14]
+    },
+    {
+      "name": "C",
+      "mesh": "assets/models/cube.obj",
+      "position": [4, 0, 24],
+      "rotation": [0, 0, 0],
+      "scale": [0.14, 0.14, 0.14]
     }
   ]
 }
