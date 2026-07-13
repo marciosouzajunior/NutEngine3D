@@ -1,22 +1,20 @@
 #include "PlayerMoveScript.h"
+#include "../../src/core/GameObject.h"
 #include "../../src/core/InputState.h"
 
-PlayerMoveScript::PlayerMoveScript(const nut::math::Vec3& unitsPerSecond)
-    : m_unitsPerSecond(unitsPerSecond) {}
+namespace nut::game {
 
-void PlayerMoveScript::onUpdate(float deltaTime) {
-    if (!gameObject()) {
-        return;
-    }
-
-    const nut::InputState* input = inputState();
-    if (!input) {
-        return;
-    }
-
-    gameObject()->transform.position.x += input->moveX * m_unitsPerSecond.x * deltaTime;
-    gameObject()->transform.position.y += input->moveY * m_unitsPerSecond.y * deltaTime;
-    if (input->primaryPressed) {
-        gameObject()->transform.position.z += m_unitsPerSecond.z * deltaTime;
+void PlayerMoveScript::update(
+    CompiledScriptInstance& instance,
+    GameObject& object,
+    const InputState& input,
+    float deltaTime
+) {
+    object.transform.position.x += input.moveX * instance.configFloat(0) * deltaTime;
+    object.transform.position.y += input.moveY * instance.configFloat(1) * deltaTime;
+    if (input.primaryPressed) {
+        object.transform.position.z += instance.configFloat(2) * deltaTime;
     }
 }
+
+} // namespace nut::game

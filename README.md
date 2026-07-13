@@ -50,7 +50,7 @@ Those numbers matter because a lot of the architecture is there simply to stay i
 - `GameObject`: represents gameplay objects such as players, enemies, props, or items. It stores transform/mesh data and supports parent/child scene graph relationships.
 - `Script`: reusable C++ behavior attached to a `GameObject` and updated once per frame.
 - `ObjLoader`: imports simple static `.obj` meshes by reading vertex positions and wireframe edges.
-- `scene/`: contains compiled scene runtime classes such as `SceneBinaryLoader` and `LoadedScene`.
+- `scene/`: contains compiled scene runtime classes such as `SceneBinaryLoader` and `RuntimeScene`.
 - `assets/scripts/`: contains the user-authored C++ gameplay scripts plus the catalog used to map names, ids, and native factories.
 
 Scripts can find and interact with other objects in the same scene:

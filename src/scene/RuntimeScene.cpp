@@ -69,7 +69,7 @@ void RuntimeScene::destroyMesh(Mesh* mesh) {
 #endif
 }
 
-bool RuntimeScene::storeScriptInstance(const NutScriptInstance& instance) {
+bool RuntimeScene::storeScriptInstance(const CompiledScriptInstance& instance) {
 #ifdef ARDUINO
     return m_scriptInstances.push_back(instance);
 #else
@@ -193,12 +193,10 @@ Mesh* RuntimeScene::createMesh() {
 }
 
 void RuntimeScene::onUpdate(float deltaTime) {
-    // The runtime scene owns the compact compiled-script runtime.
-    // That keeps desktop and Nano on the same behavioral path.
-    runCompiledScripts(deltaTime);
+    (void)deltaTime;
 }
 
-bool RuntimeScene::addScriptInstance(const NutScriptInstance& instance) {
+bool RuntimeScene::addScriptInstance(const CompiledScriptInstance& instance) {
     if (instance.objectIndex >= m_ownedObjects.size()) {
         return false;
     }
@@ -206,40 +204,16 @@ bool RuntimeScene::addScriptInstance(const NutScriptInstance& instance) {
     return storeScriptInstance(instance);
 }
 
-void RuntimeScene::runCompiledScripts(float deltaTime) {
-    // This is the simulation step for compiled scripts.
-    // Each instance targets an object by index and applies only the behavior
-    // encoded in the compact scene payload.
-    for (NutScriptInstance& script : m_scriptInstances) {
-        if (script.objectIndex >= m_ownedObjects.size()) {
-            continue;
-        }
+size_t RuntimeScene::scriptInstanceCount() const {
+    return m_scriptInstances.size();
+}
 
-        GameObject* object = m_ownedObjects[script.objectIndex];
-        if (!object) {
-            continue;
-        }
+CompiledScriptInstance* RuntimeScene::scriptInstanceAt(size_t index) {
+    return index < m_scriptInstances.size() ? &m_scriptInstances[index] : nullptr;
+}
 
-        switch (script.scriptId) {
-        case SpinScript::kScriptId:
-            object->transform.rotation.x += script.config.spin.rotationSpeedX * deltaTime;
-            object->transform.rotation.y += script.config.spin.rotationSpeedY * deltaTime;
-            object->transform.rotation.z += script.config.spin.rotationSpeedZ * deltaTime;
-            break;
-        case DummyScript::kScriptId:
-            (void)script.config.dummy.enabled;
-            break;
-        case PlayerMoveScript::kScriptId:
-            object->transform.position.x += inputState().moveX * script.config.playerMove.unitsPerSecondX * deltaTime;
-            object->transform.position.y += inputState().moveY * script.config.playerMove.unitsPerSecondY * deltaTime;
-            if (inputState().primaryPressed) {
-                object->transform.position.z += script.config.playerMove.unitsPerSecondZ * deltaTime;
-            }
-            break;
-        default:
-            break;
-        }
-    }
+const CompiledScriptInstance* RuntimeScene::scriptInstanceAt(size_t index) const {
+    return index < m_scriptInstances.size() ? &m_scriptInstances[index] : nullptr;
 }
 
 #ifdef ARDUINO

@@ -193,13 +193,14 @@ Object count alone is not the real cost. Vertices, edges, scripts, hierarchy,
 input, future collision/physics, and display traffic share the same CPU/RAM
 budget. Prefer shared meshes and simple wireframes.
 
-The display adapter now clips each line to the active 8-pixel OLED page before
-rasterization. This produced a small visible improvement in the 146-edge test
-without increasing SRAM. The renderer also reuses a parent's rotation trig for
+An experiment clipped each line to the active 8-pixel OLED page before running
+Bresenham. It was rejected: integer endpoint rounding restarted Bresenham with a
+different error phase on each page and left visible gaps in diagonal edges at
+page boundaries. Keep the cheap page bounding-box rejection, but rasterize from
+the original endpoints unless a future clipper explicitly preserves the line's
+rasterization phase. The renderer still reuses a parent's rotation trig for
 children whose local rotation is zero. That change reduced flash slightly and
 remained stable on hardware, but its visual performance gain was inconclusive.
-Keep both optimizations, but do not count either as enough headroom for physics
-or substantially denser scenes.
 
 ### Loader/renderer shared SRAM
 
@@ -233,9 +234,13 @@ factories, polymorphic ownership, or per-instance heap allocation unless their
 cost is demonstrated to be lower than the current mechanism.
 
 Dynamic script properties are allowed in the sense that each scene instance can
-carry different compiled configuration values. They must deserialize into a
-bounded `NutScriptInstance`/native representation. Do not interpret raw JSON at
+carry different compiled configuration values. They must deserialize into the
+bounded core `CompiledScriptInstance` payload. Do not interpret raw JSON at
 runtime.
+
+`RuntimeScene` and `SceneBinaryLoader` must remain independent of concrete game
+scripts. The loader copies opaque config bytes; modules in `assets/scripts`
+interpret them, and `GameScriptDispatcher` is the game-side composition point.
 
 Update scripts once per logical frame, before rendering any OLED page. Keep
 per-frame script code allocation-free and avoid expensive floating-point work in
@@ -323,8 +328,8 @@ time and record firmware tag, RAM, flash, frame time, visual quality, and resets
    drawing, and I2C presentation without leaving heavy instrumentation enabled.
 3. Sweep object count using one tiny shared mesh so object/runtime cost is
    separated from geometry cost.
-4. Sweep vertices and edges independently, including long clipped lines and
-   mostly off-screen geometry, to quantify the page clipper's benefit.
+4. Sweep vertices and edges independently, including long lines and mostly
+   off-screen geometry, while checking continuity at every OLED page boundary.
 5. Sweep active script instances and script property bytes independently; test
    scripts that update transforms as well as scripts that remain idle.
 6. Measure joystick sampling plus button handling under sustained movement and

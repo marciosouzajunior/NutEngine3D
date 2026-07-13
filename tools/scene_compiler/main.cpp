@@ -196,23 +196,28 @@ bool encodeBinaryScriptConfig(
     std::vector<std::uint8_t>& out
 ) {
     switch (scriptId) {
-    case SpinScript::kScriptId: {
+    case nut::game::SpinScript::kScriptId: {
         const std::vector<double> rotationSpeed = readVec3(script.get("rotationSpeed"), {0.0, 0.0, 0.0});
         writeF32(out, static_cast<float>(rotationSpeed[0]));
         writeF32(out, static_cast<float>(rotationSpeed[1]));
         writeF32(out, static_cast<float>(rotationSpeed[2]));
         return true;
     }
-    case DummyScript::kScriptId:
+    case nut::game::DummyScript::kScriptId:
         writeU8(out, script.get("enabled").asBool(true) ? 1 : 0);
         return true;
-    case PlayerMoveScript::kScriptId: {
+    case nut::game::PlayerMoveScript::kScriptId: {
         const std::vector<double> unitsPerSecond = readVec3(script.get("unitsPerSecond"), {1.0, 1.0, 0.0});
         writeF32(out, static_cast<float>(unitsPerSecond[0]));
         writeF32(out, static_cast<float>(unitsPerSecond[1]));
         writeF32(out, static_cast<float>(unitsPerSecond[2]));
         return true;
     }
+    case nut::game::TunnelRunScript::kScriptId:
+        writeF32(out, static_cast<float>(script.get("baseSpeed").asNumber(2.4)));
+        writeF32(out, static_cast<float>(script.get("speedStep").asNumber(0.12)));
+        writeF32(out, static_cast<float>(script.get("collisionRadius").asNumber(1.25)));
+        return true;
     default:
         return false;
     }
@@ -299,7 +304,7 @@ bool writeSceneHeader(
 
         for (const nut::Json& script : object.scripts) {
             ScriptRecord scriptRecord;
-            const uint16_t scriptId = nut::scripts::scriptIdFromName(script.get("type").asString(""));
+            const uint16_t scriptId = nut::game::scriptIdFromName(script.get("type").asString(""));
             if (scriptId == 0) {
                 std::cerr << "Unknown script type referenced by scene: "
                           << script.get("type").asString("") << "\n";

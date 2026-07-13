@@ -1,5 +1,4 @@
 #include "SceneBinaryLoader.h"
-#include "../../assets/scripts/ScriptCatalog.h"
 
 #ifdef ARDUINO
 #include <Arduino.h>
@@ -265,11 +264,12 @@ bool decodeScriptConfig(
     size_t size,
     const ScriptRecord& scriptRecord,
     uint16_t objectIndex,
-    RuntimeScene::NutScriptInstance& instance
+    CompiledScriptInstance& instance
 ) {
-    // Turn one packed script config payload into the compact runtime format
-    // used by RuntimeScene on both desktop and Nano.
-    if (scriptRecord.configOffset + scriptRecord.configSize > size) {
+    // The engine does not interpret game configuration. It only validates the
+    // fixed payload capacity and copies the bytes into the runtime instance.
+    if (scriptRecord.configOffset + scriptRecord.configSize > size
+        || scriptRecord.configSize > CompiledScriptInstance::CONFIG_CAPACITY) {
         return false;
     }
 
@@ -277,32 +277,14 @@ bool decodeScriptConfig(
     instance.scriptId = scriptRecord.scriptId;
 
     ByteReader configReader(data + scriptRecord.configOffset, scriptRecord.configSize);
-    switch (scriptRecord.scriptId) {
-    case SpinScript::kScriptId:
-        if (scriptRecord.configSize != sizeof(float) * 3) {
+    for (uint16_t i = 0; i < scriptRecord.configSize; ++i) {
+        uint8_t byte = 0;
+        if (!configReader.readU8(byte)) {
             return false;
         }
-        return configReader.readF32(instance.config.spin.rotationSpeedX)
-            && configReader.readF32(instance.config.spin.rotationSpeedY)
-            && configReader.readF32(instance.config.spin.rotationSpeedZ);
-    case DummyScript::kScriptId: {
-        uint8_t enabled = 1;
-        if (scriptRecord.configSize > 0 && !configReader.readU8(enabled)) {
-            return false;
-        }
-        instance.config.dummy.enabled = enabled != 0;
-        return true;
+        instance.setConfigByte(i, byte);
     }
-    case PlayerMoveScript::kScriptId:
-        if (scriptRecord.configSize != sizeof(float) * 3) {
-            return false;
-        }
-        return configReader.readF32(instance.config.playerMove.unitsPerSecondX)
-            && configReader.readF32(instance.config.playerMove.unitsPerSecondY)
-            && configReader.readF32(instance.config.playerMove.unitsPerSecondZ);
-    default:
-        return false;
-    }
+    return true;
 }
 
 } // namespace
@@ -638,7 +620,7 @@ bool SceneBinaryLoader::load(
                 logMessage(NUT_LOG_LITERAL("Script config range is out of bounds."));
                 return false;
             }
-            RuntimeScene::NutScriptInstance instance;
+            CompiledScriptInstance instance;
             if (!decodeScriptConfig(
                     data + scriptConfigOffset,
                     header.scriptConfigSize,
@@ -646,7 +628,7 @@ bool SceneBinaryLoader::load(
                     static_cast<uint16_t>(objectIndex),
                     instance
                 )) {
-                logMessageValue(NUT_LOG_LITERAL("Unknown script id in scene binary: "), scriptRecord.scriptId);
+                logMessageValue(NUT_LOG_LITERAL("Invalid script config for id: "), scriptRecord.scriptId);
                 return false;
             }
 

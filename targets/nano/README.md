@@ -91,11 +91,12 @@ A denser benchmark with 60 projected vertices and about 146 edges also runs at
 1604 B RAM (78.3%), but animation is noticeably strained. Treat this as a
 conditional limit for slow-paced scenes, not the normal gameplay budget.
 
-Page-local line clipping made this dense test slightly better without adding
-RAM. Reusing parent rotation calculations for children with zero local rotation
-also remained stable, although the visual gain was not conclusive. The current
-CPU optimizations help, but the 146-edge case still is not the recommended game
-budget.
+An integer page-local line-clipping experiment made this dense test slightly
+faster, but it was removed because restarting Bresenham at rounded endpoints
+left gaps in diagonal edges between OLED pages. Reusing parent rotation
+calculations for children with zero local rotation remains enabled and stable,
+although its visual gain was not conclusive. The 146-edge case still is not the
+recommended game budget.
 
 ### Remaining validation
 

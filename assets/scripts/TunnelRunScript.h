@@ -9,9 +9,11 @@ struct InputState;
 
 namespace game {
 
-struct SpinScript {
-    static constexpr uint16_t kScriptId = 1;
-    static constexpr const char* kTypeName = "SpinScript";
+// Complete game-side Tunnel Run script module. The engine sees only its
+// numeric id and opaque bytes; this module owns their gameplay meaning.
+struct TunnelRunScript {
+    static constexpr uint16_t kScriptId = 4;
+    static constexpr const char* kTypeName = "TunnelRunScript";
 
     static void update(
         CompiledScriptInstance& instance,

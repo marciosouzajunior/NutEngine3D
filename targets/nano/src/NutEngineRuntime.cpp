@@ -5,3 +5,5 @@
 #include "../../../assets/scripts/SpinScript.cpp"
 #include "../../../assets/scripts/DummyScript.cpp"
 #include "../../../assets/scripts/PlayerMoveScript.cpp"
+#include "../../../assets/scripts/TunnelRunScript.cpp"
+#include "../../../assets/scripts/GameScriptDispatcher.cpp"

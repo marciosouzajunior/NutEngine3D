@@ -4,8 +4,17 @@
 #include "render/WireframeRenderer.h"
 #include "scene/RuntimeScene.h"
 #include "scene/SceneBinaryLoader.h"
+#include "scripts/GameScriptDispatcher.h"
 #include "../../build/assets/nano/demo_scene.h"
 #include <iostream>
+
+namespace {
+
+void updateGameScripts(nut::Scene& scene, float deltaTime) {
+    nut::game::updateScripts(static_cast<nut::RuntimeScene&>(scene), deltaTime);
+}
+
+} // namespace
 
 int main() {
     static constexpr uint16_t kDemoSceneId = 1;
@@ -22,7 +31,7 @@ int main() {
     // 2. Create the renderer and engine.
     // The renderer knows how to draw a Scene. The engine knows when to update and draw.
     nut::WireframeRenderer renderer(&graphics);
-    nut::Engine engine(&graphics, &renderer);
+    nut::Engine engine(&graphics, &renderer, updateGameScripts);
 
     // 3. Load the compiled demo scene blob.
     nut::RuntimeScene scene;

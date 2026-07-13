@@ -18,15 +18,19 @@ namespace nut {
 // On Nano the loop is handwritten in targets/nano/main.cpp because that target
 // uses page-based presentation, but the high-level responsibilities are the same.
 class Engine {
+public:
+    using SceneUpdateHook = void (*)(Scene&, float);
+
 private:
     // Raw pointers are used here because the engine does not own these objects.
     // main.cpp creates them and keeps them alive while Engine::run is executing.
     Graphics* m_graphics;
     WireframeRenderer* m_renderer;
+    SceneUpdateHook m_sceneUpdateHook;
 
 public:
-    Engine(Graphics* graphics, WireframeRenderer* renderer)
-        : m_graphics(graphics), m_renderer(renderer) {}
+    Engine(Graphics* graphics, WireframeRenderer* renderer, SceneUpdateHook sceneUpdateHook = nullptr)
+        : m_graphics(graphics), m_renderer(renderer), m_sceneUpdateHook(sceneUpdateHook) {}
 
     void run(SceneManager& sceneManager) {
         // If the graphics backend or renderer is missing, there is nothing safe to run.
@@ -48,6 +52,9 @@ public:
             Scene* activeScene = sceneManager.activeScene();
             if (activeScene) {
                 activeScene->setInputState(m_graphics->sampleInput());
+                if (m_sceneUpdateHook) {
+                    m_sceneUpdateHook(*activeScene, deltaTime);
+                }
             }
             sceneManager.update(deltaTime);
 

@@ -172,20 +172,24 @@ private:
     bool projectPoint(
         const math::Vec3& worldPoint,
         const math::Vec3& cameraPosition,
+        const RotationTrig& cameraViewTrig,
         int halfWidth,
         int halfHeight,
         math::Vec2& outPoint
     ) const {
         // Perspective projection from 3D world space into 2D screen space.
         // If this returns false, the point is outside the useful view range.
-        const float depth = worldPoint.z - cameraPosition.z;
+        // Move the point into camera space. Camera rotation is inverted because
+        // moving the viewpoint is equivalent to rotating the world oppositely.
+        math::Vec3 cameraPoint = rotateXYZ(worldPoint - cameraPosition, cameraViewTrig);
+        const float depth = cameraPoint.z;
         if (depth <= 0.2f || depth > 80.0f) {
             return false;
         }
 
         const float focal = static_cast<float>(halfWidth);
-        outPoint.x = static_cast<float>(halfWidth) + (worldPoint.x - cameraPosition.x) * focal / depth;
-        outPoint.y = static_cast<float>(halfHeight) - (worldPoint.y - cameraPosition.y) * focal / depth;
+        outPoint.x = static_cast<float>(halfWidth) + cameraPoint.x * focal / depth;
+        outPoint.y = static_cast<float>(halfHeight) - cameraPoint.y * focal / depth;
         return true;
     }
 
@@ -196,6 +200,7 @@ private:
         const math::Vec3& worldPosition,
         const RotationTrig& worldTrig,
         const math::Vec3& cameraPosition,
+        const RotationTrig& cameraViewTrig,
         int halfWidth,
         int halfHeight,
         math::Vec2& outPoint
@@ -209,7 +214,7 @@ private:
         );
         vertex = rotateXYZ(vertex, worldTrig);
         vertex += worldPosition;
-        return projectPoint(vertex, cameraPosition, halfWidth, halfHeight, outPoint);
+        return projectPoint(vertex, cameraPosition, cameraViewTrig, halfWidth, halfHeight, outPoint);
     }
 
     uint16_t countVisibleEdges(
@@ -249,7 +254,8 @@ private:
         int16_t meshIndex,
         const math::Vec3& worldPosition,
         const RotationTrig& worldTrig,
-        const math::Vec3& cameraPosition
+        const math::Vec3& cameraPosition,
+        const RotationTrig& cameraViewTrig
     ) {
         // Frame-preparation stage for one mesh:
         // - read vertices from flash
@@ -291,6 +297,7 @@ private:
                 worldPosition,
                 worldTrig,
                 cameraPosition,
+                cameraViewTrig,
                 halfWidth,
                 halfHeight,
                 projected
@@ -357,6 +364,12 @@ public:
         m_cachedObjects.clear();
 
         const math::Vec3 cameraPosition = scene.camera().transform.position;
+        const math::Vec3& cameraRotation = scene.camera().transform.rotation;
+        const RotationTrig cameraViewTrig = buildRotationTrig(math::Vec3(
+            -cameraRotation.x,
+            -cameraRotation.y,
+            -cameraRotation.z
+        ));
         for (size_t i = 0; i < scene.rootObjectCount(); ++i) {
             // Nano scenes intentionally stop at two hierarchy levels:
             // root objects and one child layer.
@@ -372,7 +385,7 @@ public:
             const RotationTrig rootWorldTrig = buildRotationTrig(rootWorldRotation);
 
             if (root->meshIndex() >= 0) {
-                cacheBinaryMesh(scene, root, root->meshIndex(), rootWorldPosition, rootWorldTrig, cameraPosition);
+                cacheBinaryMesh(scene, root, root->meshIndex(), rootWorldPosition, rootWorldTrig, cameraPosition, cameraViewTrig);
             }
 
             for (size_t childIndex = 0; childIndex < root->childObjectCount(); ++childIndex) {
@@ -396,7 +409,7 @@ public:
                     : rootWorldTrig;
 
                 if (child->meshIndex() >= 0) {
-                    cacheBinaryMesh(scene, child, child->meshIndex(), childWorldPosition, childWorldTrig, cameraPosition);
+                    cacheBinaryMesh(scene, child, child->meshIndex(), childWorldPosition, childWorldTrig, cameraPosition, cameraViewTrig);
                 }
             }
         }

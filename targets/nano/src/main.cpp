@@ -4,6 +4,7 @@
 #include "../../../build/assets/nano/demo_scene.h"
 #include "../../../src/scene/RuntimeScene.h"
 #include "../../../src/scene/SceneBinaryLoader.h"
+#include "../../../assets/scripts/GameScriptDispatcher.h"
 #include <new>
 #include <stddef.h>
 #ifdef ARDUINO
@@ -31,6 +32,12 @@ constexpr const char* kFirmwareVersion = "nano-fw-2026-07-12-" NUT_FW_TAG;
 #define NUT_JOYSTICK_BUTTON_PIN 2
 #endif
 
+// The OLED is mounted in the 180-degree orientation selected by the display
+// adapter, so this joystick's physical left/right direction is reversed too.
+#ifndef NUT_JOYSTICK_X_DIRECTION
+#define NUT_JOYSTICK_X_DIRECTION -1.0f
+#endif
+
 NutNanoDisplayAdapter g_display;
 NutNanoGraphics g_graphics(&g_display);
 nut::RuntimeScene g_scene;
@@ -56,7 +63,7 @@ float readNormalizedAxis(int pin) {
 
 nut::InputState readJoystickInput() {
     nut::InputState input;
-    input.moveX = readNormalizedAxis(NUT_JOYSTICK_X_PIN);
+    input.moveX = readNormalizedAxis(NUT_JOYSTICK_X_PIN) * NUT_JOYSTICK_X_DIRECTION;
     input.moveY = readNormalizedAxis(NUT_JOYSTICK_Y_PIN);
     input.primaryPressed = digitalRead(NUT_JOYSTICK_BUTTON_PIN) == LOW;
     return input;
@@ -145,7 +152,7 @@ void tickEngine() {
     g_graphics.beginFrame();
     const float dt = g_graphics.deltaTime();
     g_scene.setInputState(readJoystickInput());
-    g_scene.onUpdate(dt);
+    nut::game::updateScripts(g_scene, dt);
     g_renderer->prepareFrame(g_scene);
 
     for (int page = 0; page < g_graphics.pageCount(); ++page) {

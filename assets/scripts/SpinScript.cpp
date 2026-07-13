@@ -1,17 +1,19 @@
 #include "SpinScript.h"
 #include "../../src/core/GameObject.h"
 
-SpinScript::SpinScript(const nut::math::Vec3& rotationSpeed)
-    : m_rotationSpeed(rotationSpeed) {}
+namespace nut::game {
 
-void SpinScript::onUpdate(float deltaTime) {
-    if (!gameObject()) {
-        return;
-    }
+void SpinScript::update(
+    CompiledScriptInstance& instance,
+    GameObject& object,
+    const InputState& input,
+    float deltaTime
+) {
+    (void)input;
 
-    // Scripts modify the GameObject they are attached to.
-    // Here we rotate only the Transform; the Mesh shape stays unchanged.
-    gameObject()->transform.rotation.x += m_rotationSpeed.x * deltaTime;
-    gameObject()->transform.rotation.y += m_rotationSpeed.y * deltaTime;
-    gameObject()->transform.rotation.z += m_rotationSpeed.z * deltaTime;
+    object.transform.rotation.x += instance.configFloat(0) * deltaTime;
+    object.transform.rotation.y += instance.configFloat(1) * deltaTime;
+    object.transform.rotation.z += instance.configFloat(2) * deltaTime;
 }
+
+} // namespace nut::game

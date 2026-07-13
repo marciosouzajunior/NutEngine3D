@@ -1,18 +1,25 @@
 #pragma once
 
-#include "../../src/core/Script.h"
-#include "../../src/math/Vec3.h"
+#include "../../src/core/CompiledScriptInstance.h"
 #include <stdint.h>
 
-class PlayerMoveScript : public nut::Script {
-private:
-    nut::math::Vec3 m_unitsPerSecond;
+namespace nut {
+class GameObject;
+struct InputState;
 
-public:
+namespace game {
+
+struct PlayerMoveScript {
     static constexpr uint16_t kScriptId = 3;
     static constexpr const char* kTypeName = "PlayerMoveScript";
 
-    explicit PlayerMoveScript(const nut::math::Vec3& unitsPerSecond);
-
-    void onUpdate(float deltaTime) override;
+    static void update(
+        CompiledScriptInstance& instance,
+        GameObject& object,
+        const InputState& input,
+        float deltaTime
+    );
 };
+
+} // namespace game
+} // namespace nut

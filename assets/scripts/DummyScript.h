@@ -1,29 +1,25 @@
 #pragma once
 
-#include "../../src/core/Script.h"
-#include <stddef.h>
+#include "../../src/core/CompiledScriptInstance.h"
 #include <stdint.h>
-#ifndef ARDUINO
-#include <string>
-#endif
 
-class DummyScript : public nut::Script {
-private:
-#ifndef ARDUINO
-    std::string m_note;
-#endif
-    bool m_enabled;
+namespace nut {
+class GameObject;
+struct InputState;
 
-public:
+namespace game {
+
+struct DummyScript {
     static constexpr uint16_t kScriptId = 2;
     static constexpr const char* kTypeName = "DummyScript";
 
-#ifndef ARDUINO
-    DummyScript(std::string note, bool enabled);
-    explicit DummyScript(bool enabled);
-#else
-    explicit DummyScript(bool enabled);
-#endif
-
-    void onUpdate(float deltaTime) override;
+    static void update(
+        CompiledScriptInstance& instance,
+        GameObject& object,
+        const InputState& input,
+        float deltaTime
+    );
 };
+
+} // namespace game
+} // namespace nut
