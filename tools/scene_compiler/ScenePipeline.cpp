@@ -22,6 +22,7 @@ struct CompiledObject {
     std::string name;
     int parentIndex = -1;
     int meshIndex = -1;
+    bool enabled = true;
     std::vector<double> position {0.0, 0.0, 0.0};
     std::vector<double> rotation {0.0, 0.0, 0.0};
     std::vector<double> scale {1.0, 1.0, 1.0};
@@ -43,6 +44,7 @@ struct ObjectRecord {
     int nameOffset = 0;
     int parentIndex = -1;
     int meshIndex = -1;
+    std::uint8_t enabled = 1;
     float position[3] {0.0f, 0.0f, 0.0f};
     float rotation[3] {0.0f, 0.0f, 0.0f};
     float scale[3] {1.0f, 1.0f, 1.0f};
@@ -167,6 +169,7 @@ bool flattenObjectTree(
     CompiledObject object;
     object.name = objectJson.get("name").asString("GameObject");
     object.parentIndex = parentIndex;
+    object.enabled = objectJson.get("enabled").asBool(true);
     object.position = readVec3(objectJson.get("position"), {0.0, 0.0, 0.0});
     object.rotation = readVec3(objectJson.get("rotation"), {0.0, 0.0, 0.0});
     object.scale = readVec3(objectJson.get("scale"), {1.0, 1.0, 1.0});
@@ -259,8 +262,14 @@ bool encodeBinaryScriptConfig(
         writeF32(out, static_cast<float>(rotationSpeed[2]));
         return true;
     }
-    case nut::game::DummyScript::kScriptId:
-        writeU8(out, script.get("enabled").asBool(true) ? 1 : 0);
+    case nut::game::AutoTranslateScript::kScriptId: {
+        const std::vector<double> unitsPerSecond = readVec3(script.get("unitsPerSecond"), {0.0, 0.0, 0.0});
+        writeF32(out, static_cast<float>(unitsPerSecond[0]));
+        writeF32(out, static_cast<float>(unitsPerSecond[1]));
+        writeF32(out, static_cast<float>(unitsPerSecond[2]));
+        return true;
+    }
+    case nut::game::GameControllerScript::kScriptId:
         return true;
     case nut::game::PlayerMoveScript::kScriptId: {
         const std::vector<double> unitsPerSecond = readVec3(script.get("unitsPerSecond"), {1.0, 1.0, 0.0});
@@ -269,11 +278,52 @@ bool encodeBinaryScriptConfig(
         writeF32(out, static_cast<float>(unitsPerSecond[2]));
         return true;
     }
+    case nut::game::ClampPositionScript::kScriptId: {
+        float axis = 0.0f;
+        const nut::Json& axisValue = script.get("axis");
+        if (axisValue.isString()) {
+            const std::string axisName = axisValue.asString("x");
+            if (axisName == "y" || axisName == "Y") {
+                axis = 1.0f;
+            } else if (axisName == "z" || axisName == "Z") {
+                axis = 2.0f;
+            }
+        } else {
+            axis = static_cast<float>(axisValue.asNumber(0.0));
+        }
+        writeF32(out, axis);
+        writeF32(out, static_cast<float>(script.get("minValue").asNumber(-4.0)));
+        writeF32(out, static_cast<float>(script.get("maxValue").asNumber(4.0)));
+        return true;
+    }
+    case nut::game::PulseScaleScript::kScriptId:
+        writeF32(out, static_cast<float>(script.get("speed").asNumber(2.0)));
+        writeF32(out, static_cast<float>(script.get("minScale").asNumber(0.8)));
+        writeF32(out, static_cast<float>(script.get("maxScale").asNumber(1.2)));
+        return true;
     case nut::game::TunnelRunScript::kScriptId:
         writeF32(out, static_cast<float>(script.get("baseSpeed").asNumber(2.4)));
         writeF32(out, static_cast<float>(script.get("speedStep").asNumber(0.12)));
         writeF32(out, static_cast<float>(script.get("collisionRadius").asNumber(1.25)));
         return true;
+    case nut::game::WrapPositionScript::kScriptId: {
+        float axis = 2.0f;
+        const nut::Json& axisValue = script.get("axis");
+        if (axisValue.isString()) {
+            const std::string axisName = axisValue.asString("z");
+            if (axisName == "x" || axisName == "X") {
+                axis = 0.0f;
+            } else if (axisName == "y" || axisName == "Y") {
+                axis = 1.0f;
+            }
+        } else {
+            axis = static_cast<float>(axisValue.asNumber(2.0));
+        }
+        writeF32(out, axis);
+        writeF32(out, static_cast<float>(script.get("minValue").asNumber(-8.0)));
+        writeF32(out, static_cast<float>(script.get("maxValue").asNumber(8.0)));
+        return true;
+    }
     default:
         return false;
     }
@@ -441,6 +491,7 @@ bool compileScene(const fs::path& inputPath, const nut::Json& root, CompiledScen
         record.nameOffset = stringOffsets.at(object.name);
         record.parentIndex = object.parentIndex;
         record.meshIndex = object.meshIndex;
+        record.enabled = object.enabled ? 1 : 0;
         record.position[0] = static_cast<float>(object.position[0]);
         record.position[1] = static_cast<float>(object.position[1]);
         record.position[2] = static_cast<float>(object.position[2]);
@@ -486,7 +537,7 @@ bool compileScene(const fs::path& inputPath, const nut::Json& root, CompiledScen
     blob.push_back('U');
     blob.push_back('T');
     blob.push_back('0');
-    writeU16(blob, 2);
+    writeU16(blob, 3);
     writeU16(blob, static_cast<std::uint16_t>(stringTable.size()));
     writeU16(blob, static_cast<std::uint16_t>(state.meshPaths.size()));
     writeU16(blob, static_cast<std::uint16_t>(objectRecords.size()));
@@ -515,6 +566,7 @@ bool compileScene(const fs::path& inputPath, const nut::Json& root, CompiledScen
         writeI16(blob, static_cast<std::int16_t>(record.meshIndex));
         writeU16(blob, record.firstScriptIndex);
         writeU16(blob, record.scriptCount);
+        writeU8(blob, record.enabled);
         for (float value : record.position) {
             writeF32(blob, value);
         }

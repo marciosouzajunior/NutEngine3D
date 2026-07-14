@@ -91,6 +91,7 @@ struct EditorObjectData {
     std::string name;
     std::string path;
     std::string meshPath;
+    bool enabled = true;
     float position[3] = {0.0f, 0.0f, 0.0f};
     float rotation[3] = {0.0f, 0.0f, 0.0f};
     float scale[3] = {1.0f, 1.0f, 1.0f};
@@ -151,10 +152,14 @@ struct ViewportCameraState {
     float position[3] = {0.0f, 0.0f, -5.0f};
     bool dragCandidate = false;
     bool dragging = false;
+    bool dollyCandidate = false;
+    bool dollying = false;
     bool rotateCandidate = false;
     bool rotating = false;
     ImVec2 dragStartMouse = ImVec2(0.0f, 0.0f);
+    float dragStartPosition[3] = {0.0f, 0.0f, -5.0f};
     float dragStartTarget[3] = {0.0f, 0.0f, 0.0f};
+    float dollyFocusPoint[3] = {0.0f, 0.0f, 0.0f};
     float dragStartYaw = 0.0f;
     float dragStartPitch = 0.0f;
     float dragStartDistance = 5.0f;
@@ -226,6 +231,7 @@ struct EditorUiActions {
     bool addObject = false;
     bool duplicateSelectedObject = false;
     bool removeSelectedObject = false;
+    bool resetSelectedObjectPosition = false;
     bool moveSelectedObjectUp = false;
     bool moveSelectedObjectDown = false;
     bool openBuildModal = false;
@@ -250,6 +256,8 @@ struct EditorBackgroundTaskState {
     std::atomic<bool> finished {false};
     std::mutex mutex;
     std::vector<std::string> pendingConsoleLines;
+    EditorTaskKind activeTaskKind = EditorTaskKind::CompileScene;
+    bool showLoadingPopup = false;
     bool copyOutputToBuildPanel = false;
     bool success = false;
     bool updatedSceneAnalysis = false;
@@ -313,6 +321,11 @@ struct EditorTaskInput {
     std::string scenePath;
 };
 
+struct NanoBudgetIndicator {
+    std::string label;
+    ImU32 color = motif::PanelShadow;
+};
+
 std::map<std::string, bool> g_scriptExpansionStates;
 EditorSceneData* g_scriptExpansionSceneData = nullptr;
 std::map<std::string, std::unique_ptr<TextEditor>> g_sourceEditors;
@@ -346,6 +359,7 @@ std::string toAbsoluteProjectPath(const std::string& relativePath);
 std::string resolveSceneReferencedPath(const std::string& scenePathDisplay, const std::string& referencedPath);
 std::string getScriptSourcePath(const std::string& typeName);
 std::unique_ptr<EditorObjectData> makeDefaultObject();
+EditorScriptData makeDefaultScript(const std::string& typeName);
 void refreshSceneObjectPaths(EditorSceneData& sceneData);
 void refreshSceneAssetReferences(EditorSceneData& sceneData);
 void drawAssetTree(const std::vector<std::string>& assetPaths);
@@ -462,6 +476,12 @@ bool tryFindObjectWorldMatrices(
     nut::math::Mat4& outParentWorldMatrix,
     nut::math::Mat4& outWorldMatrix
 );
+void accumulateObjectSubtreeWorldPivot(
+    const EditorObjectData& object,
+    const nut::math::Mat4& parentWorldMatrix,
+    nut::math::Vec3& outWorldPositionSum,
+    size_t& outWorldPositionCount
+);
 bool buildViewportTranslationGizmo(
     const EditorSceneData& sceneData,
     ViewportGizmoMode gizmoMode,
@@ -522,6 +542,7 @@ void drawNanoPreviewObjectRecursive(
     ImVec2 canvasPos,
     ImVec2 canvasSize
 );
+void setObjectEnabledRecursive(EditorObjectData& object, bool enabled);
 void drawNanoPreviewSceneContents(
     ImDrawList* drawList,
     const EditorSceneData& sceneData,
@@ -531,6 +552,20 @@ void drawNanoPreviewSceneContents(
 void updateViewportCameraPose(ViewportCameraState& viewportCameraState);
 nut::math::Mat4 buildViewportViewMatrix(const ViewportCameraState& viewportCameraState);
 void syncViewportCameraToScene(const EditorSceneData& sceneData, ViewportCameraState& viewportCameraState);
+bool tryComputeViewportDollyFocusPoint(
+    const ViewportCameraState& viewportCameraState,
+    ImVec2 canvasPos,
+    ImVec2 canvasSize,
+    ImVec2 mousePos,
+    nut::math::Vec3& outFocusPoint
+);
+bool tryComputeViewportDollyDirection(
+    const ViewportCameraState& viewportCameraState,
+    ImVec2 canvasPos,
+    ImVec2 canvasSize,
+    ImVec2 mousePos,
+    nut::math::Vec3& outDirection
+);
 float readFloat(const nut::Json& value, float defaultValue);
 void readVec3(const nut::Json& value, float outValues[3], const float defaults[3]);
 bool isObjectSelected(const EditorSceneData& sceneData, const EditorObjectData* object);
@@ -542,6 +577,7 @@ void clearSelection(EditorSceneData& sceneData);
 nut::math::Mat4 invertAffineMatrix(const nut::math::Mat4& matrix);
 nut::math::Vec3 rotateVectorAroundAxis(const nut::math::Vec3& vector, const nut::math::Vec3& axisUnit, float radians);
 EditorObjectData* findObjectByPath(EditorSceneData& sceneData, const std::string& path);
+EditorObjectData* findParentObject(EditorSceneData& sceneData, EditorObjectData* target);
 void captureUndoSnapshot(const EditorSceneData& sceneData, EditorUndoState& undoState);
 void pushUndoSnapshot(const EditorSceneData& sceneData, EditorUndoHistory& undoHistory);
 bool restoreUndoSnapshot(EditorSceneData& sceneData, const EditorUndoState& undoState);
@@ -550,9 +586,13 @@ void applyRedo(EditorSceneData& sceneData, EditorUndoHistory& undoHistory, Inspe
 void syncInspectorState(InspectorState& inspectorState, const EditorSceneData& sceneData);
 void markSceneDirty(EditorSceneData& sceneData);
 void syncInspectorTransformBuffers(InspectorState& inspectorState, const EditorSceneData& sceneData);
+void resetSelectedObjectToSceneCenter(EditorSceneData& sceneData);
+bool drawVec3TextFields(const char* label, float values[3], char buffers[3][32], float labelWidth = 72.0f);
+bool drawSingleFloatField(const char* label, float& value, char buffer[32], float labelWidth);
 void appendConsoleLine(EditorSceneData& sceneData, const std::string& line);
 void appendBuildOutputLine(EditorSceneData& sceneData, const std::string& line);
 bool updateSceneAnalysis(EditorSceneData& sceneData, bool logSummary);
+NanoBudgetIndicator buildNanoBudgetIndicator(const EditorSceneData& sceneData);
 
 std::string buildObjectPath(const std::string& parentPath, const std::string& objectName, size_t siblingIndex) {
     std::ostringstream stream;
@@ -1174,6 +1214,7 @@ nut::Json buildObjectJson(const EditorObjectData& object) {
     nut::Json objectJson = object.sourceJson;
     objectJson.type = nut::Json::Type::Object;
     objectJson.objectValue["name"] = makeJsonString(object.name);
+    objectJson.objectValue["enabled"] = makeJsonBool(object.enabled);
 
     if (object.meshPath.empty()) {
         objectJson.objectValue.erase("mesh");
@@ -1475,7 +1516,8 @@ void createEmptySceneData(EditorSceneData& sceneData, const std::string& scenePa
     sceneData.camera.rotation[2] = 0.0f;
     sceneData.camera.fov = 60.0f;
     std::unique_ptr<EditorObjectData> rootObject = makeDefaultObject();
-    rootObject->name = "GameObject";
+    rootObject->name = "Game";
+    rootObject->scripts.push_back(makeDefaultScript("GameControllerScript"));
     sceneData.roots.push_back(std::move(rootObject));
     refreshSceneObjectPaths(sceneData);
     if (!sceneData.roots.empty() && sceneData.roots.front()) {
@@ -1512,6 +1554,7 @@ std::unique_ptr<EditorObjectData> parseObject(
     object->name = objectJson.get("name").asString("GameObject");
     object->path = buildObjectPath(parentPath, object->name, siblingIndex);
     object->meshPath = objectJson.get("mesh").asString("");
+    object->enabled = objectJson.get("enabled").asBool(true);
 
     static const float defaultPosition[3] = {0.0f, 0.0f, 0.0f};
     static const float defaultRotation[3] = {0.0f, 0.0f, 0.0f};
@@ -1577,7 +1620,7 @@ std::string joinLinesForTextView(const std::vector<std::string>& lines) {
 }
 
 void drawTaskLoadingPopup(const EditorBackgroundTaskState& taskState) {
-    if (!taskState.running.load()) {
+    if (!taskState.running.load() || !taskState.showLoadingPopup) {
         return;
     }
 
@@ -1888,7 +1931,7 @@ void updateViewportPickRecursive(
 ) {
     const nut::math::Mat4 worldMatrix = parentWorldMatrix * makeEditorObjectLocalMatrix(object);
     const nut::Mesh* mesh = getViewportMesh(sceneData, object.meshPath);
-    if (mesh != nullptr) {
+    if (object.enabled && mesh != nullptr) {
         updateViewportPickForMesh(
             *mesh,
             viewProjectionMatrix * worldMatrix,
@@ -2000,11 +2043,14 @@ EditorUiActions drawMainMenu(const EditorSceneData& sceneData, bool canUndo, boo
             if (ImGui::MenuItem("Add Object", nullptr, false, sceneData.loaded)) {
                 actions.addObject = true;
             }
-            if (ImGui::MenuItem("Duplicate Object", nullptr, false, canEditObject)) {
+            if (ImGui::MenuItem("Duplicate Object", "Ctrl+D", false, canEditObject)) {
                 actions.duplicateSelectedObject = true;
             }
-            if (ImGui::MenuItem("Delete Object", nullptr, false, canEditObject)) {
+            if (ImGui::MenuItem("Delete Object", "Del", false, canEditObject)) {
                 actions.removeSelectedObject = true;
+            }
+            if (ImGui::MenuItem("Reset Position", "Ctrl+R", false, canEditObject)) {
+                actions.resetSelectedObjectPosition = true;
             }
             ImGui::EndMenu();
         }
@@ -2130,28 +2176,56 @@ EditorUiActions drawToolbar(float menuHeight, const EditorSceneData& sceneData, 
     ImGui::SameLine();
 
     if (sceneData.loaded) {
-        if (ImGui::Button("Build", ImVec2(120, 0))) {
+        if (ImGui::Button("Build", ImVec2(96.0f, 0.0f))) {
             actions.openBuildModal = true;
+        }
+        ImGui::SameLine(0.0f, 2.0f);
+        if (ImGui::ArrowButton("##BuildQuickActions", ImGuiDir_Down)) {
+            ImGui::OpenPopup("BuildQuickActions");
+        }
+        if (ImGui::BeginPopup("BuildQuickActions")) {
+            if (ImGui::MenuItem("Compile Scene")) {
+                actions.compileScene = true;
+            }
+            if (ImGui::MenuItem("Build & Upload")) {
+                actions.buildAndUploadNano = true;
+            }
+            ImGui::EndPopup();
         }
     } else {
         ImGui::BeginDisabled();
-        ImGui::Button("Build", ImVec2(120, 0));
+        ImGui::Button("Build", ImVec2(96.0f, 0.0f));
+        ImGui::SameLine(0.0f, 2.0f);
+        ImGui::ArrowButton("##BuildQuickActionsDisabled", ImGuiDir_Down);
         ImGui::EndDisabled();
     }
 
+    const NanoBudgetIndicator nanoIndicator = buildNanoBudgetIndicator(sceneData);
     std::string status;
     if (!sceneData.loaded) {
-        status = "Scene load failed - showing diagnostics in Console";
+        status = "Scene error";
     } else if (sceneData.dirty) {
-        status = "Unsaved scene changes";
-    } else {
-        status = "Scene saved to JSON";
+        status = "Unsaved changes";
     }
-    ImVec2 statusSize = ImGui::CalcTextSize(status.c_str());
+
+    const std::string topRightSummary = status.empty()
+        ? nanoIndicator.label
+        : nanoIndicator.label + "  |  " + status;
+    ImVec2 statusSize = ImGui::CalcTextSize(topRightSummary.c_str());
     float statusX = ImGui::GetWindowWidth() - statusSize.x - 16.0f;
     if (statusX > ImGui::GetCursorPosX()) {
         ImGui::SameLine(statusX);
-        ImGui::TextDisabled("%s", status.c_str());
+        ImGui::TextColored(
+            ImColor(nanoIndicator.color),
+            "%s",
+            nanoIndicator.label.c_str()
+        );
+        if (!status.empty()) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("|");
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", status.c_str());
+        }
     }
     ImGui::End();
 
@@ -2161,6 +2235,7 @@ EditorUiActions drawToolbar(float menuHeight, const EditorSceneData& sceneData, 
 
 void drawHierarchyNode(EditorObjectData& object, EditorSceneData& sceneData) {
     const bool isSelected = isObjectSelected(sceneData, &object);
+    const std::string objectLabel = object.enabled ? object.name : object.name + " (disabled)";
     ImGuiTreeNodeFlags flags =
         ImGuiTreeNodeFlags_OpenOnArrow |
         ImGuiTreeNodeFlags_OpenOnDoubleClick |
@@ -2172,7 +2247,7 @@ void drawHierarchyNode(EditorObjectData& object, EditorSceneData& sceneData) {
         flags |= ImGuiTreeNodeFlags_Selected;
     }
 
-    bool isOpen = ImGui::TreeNodeEx(static_cast<void*>(&object), flags, "%s", object.name.c_str());
+    bool isOpen = ImGui::TreeNodeEx(static_cast<void*>(&object), flags, "%s", objectLabel.c_str());
     if (ImGui::IsItemClicked()) {
         const bool shiftPressed = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
         if (shiftPressed) {
@@ -2553,6 +2628,70 @@ bool restoreUndoSnapshot(EditorSceneData& sceneData, const EditorUndoState& undo
     return true;
 }
 
+NanoBudgetIndicator buildNanoBudgetIndicator(const EditorSceneData& sceneData) {
+    NanoBudgetIndicator indicator;
+    if (!sceneData.loaded) {
+        indicator.label = "Nano: Scene error";
+        indicator.color = IM_COL32(180, 92, 92, 255);
+        return indicator;
+    }
+
+    if (!sceneData.hasSceneAnalysis) {
+        indicator.label = "Nano: Unavailable";
+        indicator.color = motif::PanelShadow;
+        return indicator;
+    }
+
+    const nut::tooling::SceneRequirements& r = sceneData.sceneAnalysis.requirements;
+    const float testedLimitUsage = std::max({
+        100.0f * static_cast<float>(r.objects) / 5.0f,
+        100.0f * static_cast<float>(r.scripts) / 3.0f,
+        100.0f * static_cast<float>(r.maxVerticesPerMesh) / 48.0f,
+        100.0f * static_cast<float>(r.maxEdgesPerMesh) / 120.0f,
+        100.0f * static_cast<float>(r.maxChildrenPerObject) / 4.0f,
+        100.0f * static_cast<float>(r.maxScriptsPerObject) / 3.0f
+    });
+    const int roundedUsagePercent = static_cast<int>(testedLimitUsage + 0.5f);
+    const bool exceedsFormatLimit =
+        r.rootObjects > 0xFFFFu ||
+        r.objects > 0xFFFFu ||
+        r.maxChildrenPerObject > 0xFFFFu ||
+        r.scripts > 0xFFFFu ||
+        r.maxScriptsPerObject > 0xFFFFu ||
+        r.meshes > 0xFFFFu ||
+        r.stringTableBytes > 0xFFFFu ||
+        r.maxVerticesPerMesh > 0xFFFFu ||
+        r.maxEdgesPerMesh > 0xFFFFu;
+    const bool nearTestedLimit =
+        r.objects > 5 ||
+        r.scripts > 3 ||
+        r.maxVerticesPerMesh > 48 ||
+        r.maxEdgesPerMesh > 120 ||
+        r.maxChildrenPerObject > 4 ||
+        r.maxScriptsPerObject > 3;
+    const bool exceedsComfort =
+        r.objects > 4 ||
+        r.scripts > 3 ||
+        r.maxVerticesPerMesh > 40 ||
+        r.maxEdgesPerMesh > 84;
+
+    if (exceedsFormatLimit) {
+        indicator.label = "Nano: Invalid";
+        indicator.color = IM_COL32(180, 92, 92, 255);
+    } else if (nearTestedLimit) {
+        indicator.label = "Nano budget: " + std::to_string(roundedUsagePercent) + "%";
+        indicator.color = IM_COL32(196, 146, 64, 255);
+    } else if (exceedsComfort) {
+        indicator.label = "Nano budget: " + std::to_string(roundedUsagePercent) + "%";
+        indicator.color = IM_COL32(196, 146, 64, 255);
+    } else {
+        indicator.label = "Nano budget: " + std::to_string(roundedUsagePercent) + "%";
+        indicator.color = IM_COL32(74, 132, 82, 255);
+    }
+
+    return indicator;
+}
+
 void applyUndo(EditorSceneData& sceneData, EditorUndoHistory& undoHistory, InspectorState& inspectorState) {
     if (undoHistory.undoStack.empty()) {
         appendConsoleLine(sceneData, "> Undo failed: no undo snapshot is available.");
@@ -2636,6 +2775,7 @@ std::unique_ptr<EditorObjectData> makeDefaultObject() {
     auto object = std::make_unique<EditorObjectData>();
     object->name = "GameObject";
     object->meshPath.clear();
+    object->enabled = true;
     object->position[0] = 0.0f;
     object->position[1] = 0.0f;
     object->position[2] = 0.0f;
@@ -2647,6 +2787,13 @@ std::unique_ptr<EditorObjectData> makeDefaultObject() {
     object->scale[2] = 1.0f;
     object->sourceJson = buildObjectJson(*object);
     return object;
+}
+
+void setObjectEnabledRecursive(EditorObjectData& object, bool enabled) {
+    object.enabled = enabled;
+    for (std::unique_ptr<EditorObjectData>& child : object.children) {
+        setObjectEnabledRecursive(*child, enabled);
+    }
 }
 
 void updateViewportCameraPose(ViewportCameraState& viewportCameraState) {
@@ -2740,8 +2887,176 @@ void syncViewportCameraToScene(const EditorSceneData& sceneData, ViewportCameraS
     updateViewportCameraPose(viewportCameraState);
     viewportCameraState.dragCandidate = false;
     viewportCameraState.dragging = false;
+    viewportCameraState.dollyCandidate = false;
+    viewportCameraState.dollying = false;
     viewportCameraState.rotateCandidate = false;
     viewportCameraState.rotating = false;
+}
+
+bool tryComputeViewportDollyFocusPoint(
+    const ViewportCameraState& viewportCameraState,
+    ImVec2 canvasPos,
+    ImVec2 canvasSize,
+    ImVec2 mousePos,
+    nut::math::Vec3& outFocusPoint
+) {
+    if (canvasSize.x <= 1.0f || canvasSize.y <= 1.0f) {
+        return false;
+    }
+
+    const nut::math::Vec3 eye(
+        viewportCameraState.position[0],
+        viewportCameraState.position[1],
+        viewportCameraState.position[2]
+    );
+    const nut::math::Vec3 target(
+        viewportCameraState.orbitTarget[0],
+        viewportCameraState.orbitTarget[1],
+        viewportCameraState.orbitTarget[2]
+    );
+
+    nut::math::Vec3 forward = target - eye;
+    const float forwardLength = std::sqrt(
+        forward.x * forward.x +
+        forward.y * forward.y +
+        forward.z * forward.z
+    );
+    if (forwardLength <= 0.0001f) {
+        return false;
+    }
+    forward = forward * (1.0f / forwardLength);
+
+    const nut::math::Vec3 worldUp(0.0f, 1.0f, 0.0f);
+    nut::math::Vec3 right(
+        worldUp.y * forward.z - worldUp.z * forward.y,
+        worldUp.z * forward.x - worldUp.x * forward.z,
+        worldUp.x * forward.y - worldUp.y * forward.x
+    );
+    const float rightLength = std::sqrt(right.x * right.x + right.y * right.y + right.z * right.z);
+    if (rightLength <= 0.0001f) {
+        return false;
+    }
+    right = right * (1.0f / rightLength);
+
+    nut::math::Vec3 up(
+        forward.y * right.z - forward.z * right.y,
+        forward.z * right.x - forward.x * right.z,
+        forward.x * right.y - forward.y * right.x
+    );
+
+    const float localX = mousePos.x - canvasPos.x;
+    const float localY = mousePos.y - canvasPos.y;
+    const float ndcX = (localX / canvasSize.x) * 2.0f - 1.0f;
+    const float ndcY = 1.0f - (localY / canvasSize.y) * 2.0f;
+    const float aspect = canvasSize.x / canvasSize.y;
+    const float tanHalfFov = std::tan(nut::math::degToRad(viewportCameraState.fov) * 0.5f);
+
+    nut::math::Vec3 rayDirection =
+        forward +
+        right * (ndcX * aspect * tanHalfFov) +
+        up * (ndcY * tanHalfFov);
+    const float rayLength = std::sqrt(
+        rayDirection.x * rayDirection.x +
+        rayDirection.y * rayDirection.y +
+        rayDirection.z * rayDirection.z
+    );
+    if (rayLength <= 0.0001f) {
+        return false;
+    }
+    rayDirection = rayDirection * (1.0f / rayLength);
+
+    const float denominator =
+        rayDirection.x * forward.x +
+        rayDirection.y * forward.y +
+        rayDirection.z * forward.z;
+    if (std::fabs(denominator) <= 0.0001f) {
+        return false;
+    }
+
+    const nut::math::Vec3 toPlane = target - eye;
+    const float distanceAlongRay =
+        (toPlane.x * forward.x + toPlane.y * forward.y + toPlane.z * forward.z) / denominator;
+    if (!std::isfinite(distanceAlongRay)) {
+        return false;
+    }
+
+    outFocusPoint = eye + rayDirection * distanceAlongRay;
+    return true;
+}
+
+bool tryComputeViewportDollyDirection(
+    const ViewportCameraState& viewportCameraState,
+    ImVec2 canvasPos,
+    ImVec2 canvasSize,
+    ImVec2 mousePos,
+    nut::math::Vec3& outDirection
+) {
+    if (canvasSize.x <= 1.0f || canvasSize.y <= 1.0f) {
+        return false;
+    }
+
+    const nut::math::Vec3 eye(
+        viewportCameraState.position[0],
+        viewportCameraState.position[1],
+        viewportCameraState.position[2]
+    );
+    const nut::math::Vec3 target(
+        viewportCameraState.orbitTarget[0],
+        viewportCameraState.orbitTarget[1],
+        viewportCameraState.orbitTarget[2]
+    );
+
+    nut::math::Vec3 forward = target - eye;
+    const float forwardLength = std::sqrt(
+        forward.x * forward.x +
+        forward.y * forward.y +
+        forward.z * forward.z
+    );
+    if (forwardLength <= 0.0001f) {
+        return false;
+    }
+    forward = forward * (1.0f / forwardLength);
+
+    const nut::math::Vec3 worldUp(0.0f, 1.0f, 0.0f);
+    nut::math::Vec3 right(
+        worldUp.y * forward.z - worldUp.z * forward.y,
+        worldUp.z * forward.x - worldUp.x * forward.z,
+        worldUp.x * forward.y - worldUp.y * forward.x
+    );
+    const float rightLength = std::sqrt(right.x * right.x + right.y * right.y + right.z * right.z);
+    if (rightLength <= 0.0001f) {
+        return false;
+    }
+    right = right * (1.0f / rightLength);
+
+    nut::math::Vec3 up(
+        forward.y * right.z - forward.z * right.y,
+        forward.z * right.x - forward.x * right.z,
+        forward.x * right.y - forward.y * right.x
+    );
+
+    const float localX = mousePos.x - canvasPos.x;
+    const float localY = mousePos.y - canvasPos.y;
+    const float ndcX = (localX / canvasSize.x) * 2.0f - 1.0f;
+    const float ndcY = 1.0f - (localY / canvasSize.y) * 2.0f;
+    const float aspect = canvasSize.x / canvasSize.y;
+    const float tanHalfFov = std::tan(nut::math::degToRad(viewportCameraState.fov) * 0.5f);
+
+    nut::math::Vec3 rayDirection =
+        forward +
+        right * (ndcX * aspect * tanHalfFov) +
+        up * (ndcY * tanHalfFov);
+    const float rayLength = std::sqrt(
+        rayDirection.x * rayDirection.x +
+        rayDirection.y * rayDirection.y +
+        rayDirection.z * rayDirection.z
+    );
+    if (rayLength <= 0.0001f) {
+        return false;
+    }
+
+    outDirection = rayDirection * (1.0f / rayLength);
+    return true;
 }
 
 EditorUiActions drawViewport(
@@ -2916,9 +3231,26 @@ EditorUiActions drawViewport(
                 viewportCameraState.dragStartPitch = viewportCameraState.orbitPitch;
                 viewportCameraState.dragStartDistance = viewportCameraState.orbitDistance;
                 for (int i = 0; i < 3; ++i) {
+                    viewportCameraState.dragStartPosition[i] = viewportCameraState.position[i];
+                }
+                for (int i = 0; i < 3; ++i) {
                     viewportCameraState.dragStartTarget[i] = viewportCameraState.orbitTarget[i];
                 }
-                if (IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL)) {
+                if (IsKeyDown(KEY_LEFT_ALT) || IsKeyDown(KEY_RIGHT_ALT)) {
+                    nut::math::Vec3 dollyDirection;
+                    if (!tryComputeViewportDollyDirection(viewportCameraState, canvasPos, canvasSize, mousePos, dollyDirection)) {
+                        dollyDirection = nut::math::Vec3(0.0f, 0.0f, 1.0f);
+                    }
+                    viewportCameraState.dollyFocusPoint[0] = dollyDirection.x;
+                    viewportCameraState.dollyFocusPoint[1] = dollyDirection.y;
+                    viewportCameraState.dollyFocusPoint[2] = dollyDirection.z;
+                    viewportCameraState.dollyCandidate = true;
+                    viewportCameraState.dollying = false;
+                    viewportCameraState.dragCandidate = false;
+                    viewportCameraState.dragging = false;
+                    viewportCameraState.rotateCandidate = false;
+                    viewportCameraState.rotating = false;
+                } else if (IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL)) {
                     viewportCameraState.rotateCandidate = true;
                     viewportCameraState.rotating = false;
                     viewportCameraState.dragCandidate = false;
@@ -2994,17 +3326,23 @@ EditorUiActions drawViewport(
                         }
                         viewportCameraState.dragCandidate = false;
                         viewportCameraState.dragging = false;
+                        viewportCameraState.dollyCandidate = false;
+                        viewportCameraState.dollying = false;
                         viewportCameraState.rotateCandidate = false;
                         viewportCameraState.rotating = false;
                     } else {
                         viewportCameraState.dragCandidate = true;
                         viewportCameraState.dragging = false;
+                        viewportCameraState.dollyCandidate = false;
+                        viewportCameraState.dollying = false;
                         viewportCameraState.rotateCandidate = false;
                         viewportCameraState.rotating = false;
                     }
                 } else {
                     viewportCameraState.dragCandidate = true;
                     viewportCameraState.dragging = false;
+                    viewportCameraState.dollyCandidate = false;
+                    viewportCameraState.dollying = false;
                     viewportCameraState.rotateCandidate = false;
                     viewportCameraState.rotating = false;
                 }
@@ -3186,6 +3524,53 @@ EditorUiActions drawViewport(
                 viewportGizmoState.uniformScale = false;
                 viewportGizmoState.object = nullptr;
                 viewportGizmoState.objectSnapshots.clear();
+            }
+        }
+
+        if (viewportCameraState.dollyCandidate) {
+            if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                const ImVec2 dragDelta(
+                    mousePos.x - viewportCameraState.dragStartMouse.x,
+                    mousePos.y - viewportCameraState.dragStartMouse.y
+                );
+                const float dragDistanceSquared = dragDelta.x * dragDelta.x + dragDelta.y * dragDelta.y;
+                if (viewportCameraState.dollying || dragDistanceSquared > 16.0f) {
+                    viewportCameraState.dollying = true;
+                    const float dollyAmount = -dragDelta.y * std::max(0.02f, viewportCameraState.dragStartDistance * 0.01f);
+                    const nut::math::Vec3 dollyDirection(
+                        viewportCameraState.dollyFocusPoint[0],
+                        viewportCameraState.dollyFocusPoint[1],
+                        viewportCameraState.dollyFocusPoint[2]
+                    );
+                    const nut::math::Vec3 startPosition(
+                        viewportCameraState.dragStartPosition[0],
+                        viewportCameraState.dragStartPosition[1],
+                        viewportCameraState.dragStartPosition[2]
+                    );
+                    const nut::math::Vec3 startTarget(
+                        viewportCameraState.dragStartTarget[0],
+                        viewportCameraState.dragStartTarget[1],
+                        viewportCameraState.dragStartTarget[2]
+                    );
+                    const nut::math::Vec3 translation = dollyDirection * dollyAmount;
+                    const nut::math::Vec3 nextPosition = startPosition + translation;
+                    const nut::math::Vec3 nextTarget = startTarget + translation;
+                    viewportCameraState.position[0] = nextPosition.x;
+                    viewportCameraState.position[1] = nextPosition.y;
+                    viewportCameraState.position[2] = nextPosition.z;
+                    viewportCameraState.orbitTarget[0] = nextTarget.x;
+                    viewportCameraState.orbitTarget[1] = nextTarget.y;
+                    viewportCameraState.orbitTarget[2] = nextTarget.z;
+                    viewportCameraState.orbitDistance = std::max(0.05f, std::sqrt(
+                        (nextTarget.x - nextPosition.x) * (nextTarget.x - nextPosition.x) +
+                        (nextTarget.y - nextPosition.y) * (nextTarget.y - nextPosition.y) +
+                        (nextTarget.z - nextPosition.z) * (nextTarget.z - nextPosition.z)
+                    ));
+                    updateViewportCameraPose(viewportCameraState);
+                }
+            } else {
+                viewportCameraState.dollyCandidate = false;
+                viewportCameraState.dollying = false;
             }
         }
 
@@ -3959,6 +4344,23 @@ bool tryFindObjectWorldMatrices(
     return false;
 }
 
+void accumulateObjectSubtreeWorldPivot(
+    const EditorObjectData& object,
+    const nut::math::Mat4& parentWorldMatrix,
+    nut::math::Vec3& outWorldPositionSum,
+    size_t& outWorldPositionCount
+) {
+    const nut::math::Mat4 worldMatrix = parentWorldMatrix * makeEditorObjectLocalMatrix(object);
+    outWorldPositionSum += worldMatrix * nut::math::Vec3(0.0f, 0.0f, 0.0f);
+    ++outWorldPositionCount;
+
+    for (const std::unique_ptr<EditorObjectData>& child : object.children) {
+        if (child) {
+            accumulateObjectSubtreeWorldPivot(*child, worldMatrix, outWorldPositionSum, outWorldPositionCount);
+        }
+    }
+}
+
 bool buildViewportTranslationGizmo(
     const EditorSceneData& sceneData,
     ViewportGizmoMode gizmoMode,
@@ -4028,7 +4430,43 @@ bool buildViewportTranslationGizmo(
         return false;
     }
 
-    const nut::math::Vec3 worldOrigin = worldMatrix * nut::math::Vec3(0.0f, 0.0f, 0.0f);
+    nut::math::Vec3 worldOrigin = worldMatrix * nut::math::Vec3(0.0f, 0.0f, 0.0f);
+    if (sceneData.selectedObjects.size() > 1) {
+        nut::math::Vec3 pivotSum(0.0f, 0.0f, 0.0f);
+        size_t pivotCount = 0;
+        for (EditorObjectData* selected : sceneData.selectedObjects) {
+            if (selected == nullptr) {
+                continue;
+            }
+
+            nut::math::Mat4 selectedParentWorldMatrix;
+            nut::math::Mat4 selectedWorldMatrix;
+            if (!tryFindObjectWorldMatrices(
+                    sceneData.roots,
+                    selected,
+                    identityMatrix,
+                    selectedParentWorldMatrix,
+                    selectedWorldMatrix
+                )) {
+                continue;
+            }
+
+            pivotSum += selectedWorldMatrix * nut::math::Vec3(0.0f, 0.0f, 0.0f);
+            ++pivotCount;
+        }
+
+        if (pivotCount > 0) {
+            worldOrigin = pivotSum * (1.0f / static_cast<float>(pivotCount));
+        }
+    } else if (!sceneData.selectedObject->children.empty()) {
+        nut::math::Vec3 pivotSum(0.0f, 0.0f, 0.0f);
+        size_t pivotCount = 0;
+        accumulateObjectSubtreeWorldPivot(*sceneData.selectedObject, parentWorldMatrix, pivotSum, pivotCount);
+        if (pivotCount > 0) {
+            worldOrigin = pivotSum * (1.0f / static_cast<float>(pivotCount));
+        }
+    }
+
     const nut::math::Mat4 viewProjectionMatrix = projectionMatrix * viewMatrix;
     if (!projectViewportPoint(worldOrigin, viewProjectionMatrix, canvasPos, canvasSize, outGizmo.screenOrigin)) {
         return false;
@@ -4363,7 +4801,7 @@ void drawNanoPreviewObjectRecursive(
     const nut::math::Mat4 worldMatrix = parentWorldMatrix * makeEditorObjectLocalMatrix(object);
     const bool isSelected = isObjectSelected(sceneData, &object);
     const nut::Mesh* mesh = getViewportMesh(sceneData, object.meshPath);
-    if (mesh != nullptr) {
+    if (object.enabled && mesh != nullptr) {
         std::vector<ImVec2> screenPoints(mesh->vertices.size());
         std::vector<bool> pointValid(mesh->vertices.size(), false);
         for (size_t i = 0; i < mesh->vertices.size(); ++i) {
@@ -4455,7 +4893,7 @@ void drawViewportObjectRecursive(
     const bool isSelected = isObjectSelected(sceneData, &object);
     const bool highlightObject = parentSelected || isSelected;
     const nut::Mesh* mesh = getViewportMesh(sceneData, object.meshPath);
-    if (mesh != nullptr) {
+    if (object.enabled && mesh != nullptr) {
         const ImU32 color = highlightObject ? motif::AccentYellow : motif::ViewportWire;
         drawViewportMesh(drawList, *mesh, viewProjectionMatrix * worldMatrix, canvasPos, canvasSize, color);
     }
@@ -4476,9 +4914,13 @@ void drawViewportObjectRecursive(
 
 const std::vector<const char*>& availableScriptTypes() {
     static const std::vector<const char*> scriptTypes = {
+        "GameControllerScript",
         "SpinScript",
-        "DummyScript",
+        "AutoTranslateScript",
         "PlayerMoveScript",
+        "ClampPositionScript",
+        "PulseScaleScript",
+        "WrapPositionScript",
         "TunnelRunScript"
     };
     return scriptTypes;
@@ -4490,14 +4932,28 @@ EditorScriptData makeDefaultScript(const std::string& typeName) {
     script.expanded = true;
     syncScriptJson(script);
 
-    if (typeName == "SpinScript") {
+    if (typeName == "GameControllerScript") {
+    } else if (typeName == "SpinScript") {
         const float rotationSpeed[3] = {0.0f, 1.0f, 0.0f};
         script.scriptJson.objectValue["rotationSpeed"] = makeJsonVec3(rotationSpeed);
-    } else if (typeName == "DummyScript") {
-        script.scriptJson.objectValue["enabled"] = makeJsonBool(true);
+    } else if (typeName == "AutoTranslateScript") {
+        const float unitsPerSecond[3] = {2.0f, 0.0f, 0.0f};
+        script.scriptJson.objectValue["unitsPerSecond"] = makeJsonVec3(unitsPerSecond);
     } else if (typeName == "PlayerMoveScript") {
         const float unitsPerSecond[3] = {1.0f, 1.0f, 0.0f};
         script.scriptJson.objectValue["unitsPerSecond"] = makeJsonVec3(unitsPerSecond);
+    } else if (typeName == "ClampPositionScript") {
+        script.scriptJson.objectValue["axis"] = makeJsonString("x");
+        script.scriptJson.objectValue["minValue"] = makeJsonNumber(-4.0);
+        script.scriptJson.objectValue["maxValue"] = makeJsonNumber(4.0);
+    } else if (typeName == "PulseScaleScript") {
+        script.scriptJson.objectValue["speed"] = makeJsonNumber(5.0);
+        script.scriptJson.objectValue["minScale"] = makeJsonNumber(0.8);
+        script.scriptJson.objectValue["maxScale"] = makeJsonNumber(1.2);
+    } else if (typeName == "WrapPositionScript") {
+        script.scriptJson.objectValue["axis"] = makeJsonString("x");
+        script.scriptJson.objectValue["minValue"] = makeJsonNumber(-5.0);
+        script.scriptJson.objectValue["maxValue"] = makeJsonNumber(5.0);
     } else if (typeName == "TunnelRunScript") {
         script.scriptJson.objectValue["baseSpeed"] = makeJsonNumber(2.4);
         script.scriptJson.objectValue["speedStep"] = makeJsonNumber(0.12);
@@ -4588,8 +5044,10 @@ size_t countVisibleScriptProperties(const EditorScriptData& script) {
 bool drawScriptCard(
     EditorScriptData& script,
     const std::string& sourcePath,
-    float labelWidth
+    float labelWidth,
+    bool& outChanged
 ) {
+    outChanged = false;
     const bool hasSource = projectFileExists(sourcePath);
     const std::string sourceDisplay = hasSource ? sourcePath : "(not found)";
     const std::string popupId = script.type + "##SourceModal";
@@ -4652,6 +5110,107 @@ bool drawScriptCard(
     const bool hasProperties = countVisibleScriptProperties(script) > 0;
     if (!hasProperties) {
         ImGui::TextDisabled("No properties.");
+    } else if (script.type == "SpinScript" ||
+               script.type == "AutoTranslateScript" ||
+               script.type == "PlayerMoveScript") {
+        float vec3Value[3];
+        const char* propertyName =
+            script.type == "SpinScript" ? "rotationSpeed" : "unitsPerSecond";
+        const float defaultValue[3] = {0.0f, 0.0f, 0.0f};
+        readVec3(script.scriptJson.get(propertyName), vec3Value, defaultValue);
+        char vec3Buffers[3][32];
+        for (int i = 0; i < 3; ++i) {
+            formatFloatToBuffer(vec3Value[i], vec3Buffers[i], sizeof(vec3Buffers[i]));
+        }
+        if (drawVec3TextFields(propertyName, vec3Value, vec3Buffers, propertyLabelWidth)) {
+            script.scriptJson.objectValue[propertyName] = makeJsonVec3(vec3Value);
+            outChanged = true;
+        }
+    } else if (script.type == "ClampPositionScript" || script.type == "WrapPositionScript") {
+        std::string axis = script.scriptJson.get("axis").asString(script.type == "ClampPositionScript" ? "x" : "z");
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("axis");
+        ImGui::SameLine();
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, propertyLabelWidth - ImGui::CalcTextSize("axis").x));
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+        if (ImGui::BeginCombo("##ScriptAxis", axis.c_str())) {
+            for (const char* axisOption : {"x", "y", "z"}) {
+                const bool selected = axis == axisOption;
+                if (ImGui::Selectable(axisOption, selected)) {
+                    script.scriptJson.objectValue["axis"] = makeJsonString(axisOption);
+                    outChanged = true;
+                    axis = axisOption;
+                }
+            }
+            ImGui::EndCombo();
+        }
+
+        float minValue = readFloat(script.scriptJson.get("minValue"), script.type == "ClampPositionScript" ? -4.0f : -8.0f);
+        char minBuffer[32];
+        formatFloatToBuffer(minValue, minBuffer, sizeof(minBuffer));
+        if (drawSingleFloatField("minValue", minValue, minBuffer, propertyLabelWidth)) {
+            script.scriptJson.objectValue["minValue"] = makeJsonNumber(minValue);
+            outChanged = true;
+        }
+
+        float maxValue = readFloat(script.scriptJson.get("maxValue"), script.type == "ClampPositionScript" ? 4.0f : 8.0f);
+        char maxBuffer[32];
+        formatFloatToBuffer(maxValue, maxBuffer, sizeof(maxBuffer));
+        if (drawSingleFloatField("maxValue", maxValue, maxBuffer, propertyLabelWidth)) {
+            script.scriptJson.objectValue["maxValue"] = makeJsonNumber(maxValue);
+            outChanged = true;
+        }
+    } else if (script.type == "PulseScaleScript") {
+        float speed = readFloat(script.scriptJson.get("speed"), 2.0f);
+        char speedBuffer[32];
+        formatFloatToBuffer(speed, speedBuffer, sizeof(speedBuffer));
+        if (drawSingleFloatField("speed", speed, speedBuffer, propertyLabelWidth)) {
+            script.scriptJson.objectValue["speed"] = makeJsonNumber(speed);
+            outChanged = true;
+        }
+
+        float minScale = readFloat(script.scriptJson.get("minScale"), 0.8f);
+        char minScaleBuffer[32];
+        formatFloatToBuffer(minScale, minScaleBuffer, sizeof(minScaleBuffer));
+        if (drawSingleFloatField("minScale", minScale, minScaleBuffer, propertyLabelWidth)) {
+            script.scriptJson.objectValue["minScale"] = makeJsonNumber(minScale);
+            outChanged = true;
+        }
+
+        float maxScale = readFloat(script.scriptJson.get("maxScale"), 1.2f);
+        char maxScaleBuffer[32];
+        formatFloatToBuffer(maxScale, maxScaleBuffer, sizeof(maxScaleBuffer));
+        if (drawSingleFloatField("maxScale", maxScale, maxScaleBuffer, propertyLabelWidth)) {
+            script.scriptJson.objectValue["maxScale"] = makeJsonNumber(maxScale);
+            outChanged = true;
+        }
+    } else if (script.type == "TunnelRunScript") {
+        float baseSpeed = readFloat(script.scriptJson.get("baseSpeed"), 2.4f);
+        char baseSpeedBuffer[32];
+        formatFloatToBuffer(baseSpeed, baseSpeedBuffer, sizeof(baseSpeedBuffer));
+        if (drawSingleFloatField("baseSpeed", baseSpeed, baseSpeedBuffer, propertyLabelWidth)) {
+            script.scriptJson.objectValue["baseSpeed"] = makeJsonNumber(baseSpeed);
+            outChanged = true;
+        }
+
+        float speedStep = readFloat(script.scriptJson.get("speedStep"), 0.12f);
+        char speedStepBuffer[32];
+        formatFloatToBuffer(speedStep, speedStepBuffer, sizeof(speedStepBuffer));
+        if (drawSingleFloatField("speedStep", speedStep, speedStepBuffer, propertyLabelWidth)) {
+            script.scriptJson.objectValue["speedStep"] = makeJsonNumber(speedStep);
+            outChanged = true;
+        }
+
+        float collisionRadius = readFloat(script.scriptJson.get("collisionRadius"), 1.25f);
+        char collisionRadiusBuffer[32];
+        formatFloatToBuffer(collisionRadius, collisionRadiusBuffer, sizeof(collisionRadiusBuffer));
+        if (drawSingleFloatField("collisionRadius", collisionRadius, collisionRadiusBuffer, propertyLabelWidth)) {
+            script.scriptJson.objectValue["collisionRadius"] = makeJsonNumber(collisionRadius);
+            outChanged = true;
+        }
+    } else if (script.type == "GameControllerScript") {
+        ImGui::TextDisabled("No properties. Edit the source file to start gameplay logic.");
     } else {
         for (const auto& entry : script.scriptJson.objectValue) {
             if (entry.first == "type") {
@@ -4759,6 +5318,42 @@ void syncInspectorTransformBuffers(InspectorState& inspectorState, const EditorS
     }
 }
 
+void resetSelectedObjectToSceneCenter(EditorSceneData& sceneData) {
+    if (!sceneData.loaded) {
+        appendConsoleLine(sceneData, "> Reset Position failed: no scene is currently loaded.");
+        return;
+    }
+    if (sceneData.selectionKind != EditorSelectionKind::Object || sceneData.selectedObject == nullptr) {
+        appendConsoleLine(sceneData, "> Reset Position failed: no object is selected.");
+        return;
+    }
+
+    EditorObjectData* selectedObject = sceneData.selectedObject;
+    EditorObjectData* parentObject = findParentObject(sceneData, selectedObject);
+    if (parentObject == nullptr) {
+        selectedObject->position[0] = 0.0f;
+        selectedObject->position[1] = 0.0f;
+        selectedObject->position[2] = 0.0f;
+    } else {
+        const nut::math::Mat4 identityMatrix;
+        nut::math::Mat4 parentWorldMatrix;
+        nut::math::Mat4 worldMatrix;
+        if (!tryFindObjectWorldMatrices(sceneData.roots, selectedObject, identityMatrix, parentWorldMatrix, worldMatrix)) {
+            appendConsoleLine(sceneData, "> Reset Position failed: could not resolve object transform.");
+            return;
+        }
+
+        const nut::math::Mat4 inverseParentWorld = invertAffineMatrix(parentWorldMatrix);
+        const nut::math::Vec3 localOrigin = inverseParentWorld * nut::math::Vec3(0.0f, 0.0f, 0.0f);
+        selectedObject->position[0] = localOrigin.x;
+        selectedObject->position[1] = localOrigin.y;
+        selectedObject->position[2] = localOrigin.z;
+    }
+
+    markSceneDirty(sceneData);
+    appendConsoleLine(sceneData, "> Reset selected object position to the scene center.");
+}
+
 void markSceneDirty(EditorSceneData& sceneData) {
     if (!sceneData.dirty) {
         sceneData.dirty = true;
@@ -4778,12 +5373,26 @@ void addObjectFromHierarchy(EditorSceneData& sceneData) {
     if (sceneData.selectionKind == EditorSelectionKind::Object && sceneData.selectedObject) {
         EditorObjectData* selectedObject = sceneData.selectedObject;
         EditorObjectData* parentObject = findParentObject(sceneData, selectedObject);
-        if (parentObject == nullptr) {
+        if (parentObject != nullptr) {
+            auto insertAfterSelection = [&](auto& objects) {
+                auto it = std::find_if(
+                    objects.begin(),
+                    objects.end(),
+                    [selectedObject](const std::unique_ptr<EditorObjectData>& object) {
+                        return object.get() == selectedObject;
+                    }
+                );
+                if (it == objects.end()) {
+                    objects.push_back(std::move(newObject));
+                } else {
+                    objects.insert(it + 1, std::move(newObject));
+                }
+            };
+            insertAfterSelection(parentObject->children);
+            appendConsoleLine(sceneData, "> Added object under parent: " + parentObject->name);
+        } else {
             selectedObject->children.push_back(std::move(newObject));
             appendConsoleLine(sceneData, "> Added child object under: " + selectedObject->name);
-        } else {
-            sceneData.roots.push_back(std::move(newObject));
-            appendConsoleLine(sceneData, "> Added root object. Child selections cannot create grandchildren on Nano.");
         }
     } else {
         sceneData.roots.push_back(std::move(newObject));
@@ -4800,6 +5409,7 @@ std::unique_ptr<EditorObjectData> cloneEditorObject(const EditorObjectData& sour
     std::unique_ptr<EditorObjectData> clone = std::make_unique<EditorObjectData>();
     clone->name = source.name + " Copy";
     clone->meshPath = source.meshPath;
+    clone->enabled = source.enabled;
     for (int i = 0; i < 3; ++i) {
         clone->position[i] = source.position[i];
         clone->rotation[i] = source.rotation[i];
@@ -5471,7 +6081,8 @@ void startEditorTask(
     EditorBackgroundTaskState& taskState,
     const EditorSceneData& sceneData,
     const EditorBuildSettings& settings,
-    EditorTaskKind taskKind
+    EditorTaskKind taskKind,
+    bool showLoadingPopup
 ) {
     if (taskState.running.load()) {
         return;
@@ -5480,6 +6091,8 @@ void startEditorTask(
     {
         std::lock_guard<std::mutex> lock(taskState.mutex);
         taskState.pendingConsoleLines.clear();
+        taskState.activeTaskKind = taskKind;
+        taskState.showLoadingPopup = showLoadingPopup;
         taskState.copyOutputToBuildPanel = taskKind != EditorTaskKind::RunDesktop;
         taskState.finished = false;
         taskState.success = false;
@@ -5597,9 +6210,10 @@ void flushEditorTask(EditorBackgroundTaskState& taskState, EditorSceneData& scen
     {
         std::lock_guard<std::mutex> lock(taskState.mutex);
         for (const std::string& line : taskState.pendingConsoleLines) {
-            appendConsoleLine(sceneData, line);
             if (taskState.copyOutputToBuildPanel) {
                 appendBuildOutputLine(sceneData, line);
+            } else {
+                appendConsoleLine(sceneData, line);
             }
         }
         taskState.pendingConsoleLines.clear();
@@ -5641,23 +6255,22 @@ bool tryParseFloatBuffer(const char* buffer, float& outValue) {
     return true;
 }
 
-bool drawVec3TextFields(const char* label, float values[3], char buffers[3][32]) {
+bool drawVec3TextFields(const char* label, float values[3], char buffers[3][32], float labelWidth) {
     bool changed = false;
     ImGui::PushID(label);
     const ImGuiStyle& style = ImGui::GetStyle();
     const float lineStartX = ImGui::GetCursorPosX();
-    const float totalWidth = ImGui::GetContentRegionAvail().x;
-    const float labelWidth = 72.0f;
     const float slotGap = style.ItemSpacing.x;
     const float axisGap = style.ItemInnerSpacing.x;
     const float axisLabelWidth = ImGui::CalcTextSize("X").x;
-    const float slotsWidth = std::max(120.0f, totalWidth - labelWidth - style.ItemSpacing.x);
-    const float slotWidth = std::max(36.0f, (slotsWidth - slotGap * 2.0f) / 3.0f);
-    const float fieldWidth = std::max(24.0f, slotWidth - axisLabelWidth - axisGap - 8.0f);
 
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(label);
     ImGui::SameLine(lineStartX + labelWidth);
+
+    const float controlsWidth = std::max(120.0f, ImGui::GetContentRegionAvail().x);
+    const float totalAxisWidth = (axisLabelWidth + axisGap) * 3.0f;
+    const float fieldWidth = std::max(24.0f, (controlsWidth - totalAxisWidth - slotGap * 2.0f) / 3.0f);
 
     const char* axisLabels[3] = {"X", "Y", "Z"};
     for (int i = 0; i < 3; ++i) {
@@ -5792,6 +6405,7 @@ void drawInspector(
         prepareUndo();
         object.name = inspectorState.nameBuffer;
         markSceneDirty(sceneData);
+        updateSceneAnalysis(sceneData, false);
     }
 
     ImGui::AlignTextToFramePadding();
@@ -5836,6 +6450,23 @@ void drawInspector(
         }
         ImGui::EndCombo();
     }
+
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Enabled");
+    ImGui::SameLine();
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, inspectorLabelWidth - ImGui::CalcTextSize("Enabled").x));
+    ImGui::SameLine();
+    bool objectEnabled = object.enabled;
+    if (ImGui::Checkbox("##ObjectEnabled", &objectEnabled)) {
+        prepareUndo();
+        setObjectEnabledRecursive(object, objectEnabled);
+        markSceneDirty(sceneData);
+        appendConsoleLine(
+            sceneData,
+            std::string(objectEnabled ? "> Enabled object subtree: " : "> Disabled object subtree: ") + object.name
+        );
+    }
+
     if (drawVec3TextFields("Position", object.position, inspectorState.positionBuffers)) {
         prepareUndo();
         markSceneDirty(sceneData);
@@ -5875,13 +6506,19 @@ void drawInspector(
             EditorScriptData& script = object.scripts[i];
             const std::string sourcePath = getScriptSourcePath(script.type);
             ImGui::PushID(static_cast<int>(i));
-            if (drawScriptCard(script, sourcePath, inspectorLabelWidth)) {
+            bool scriptChanged = false;
+            if (drawScriptCard(script, sourcePath, inspectorLabelWidth, scriptChanged)) {
                 prepareUndo();
                 appendConsoleLine(sceneData, "> Removed script: " + script.type);
                 object.scripts.erase(object.scripts.begin() + static_cast<std::ptrdiff_t>(i));
                 markSceneDirty(sceneData);
                 updateSceneAnalysis(sceneData, false);
                 removedScript = true;
+            } else if (scriptChanged) {
+                prepareUndo();
+                syncScriptJson(script);
+                markSceneDirty(sceneData);
+                updateSceneAnalysis(sceneData, false);
             }
             if (i + 1 < object.scripts.size()) {
                 ImGui::Spacing();
@@ -6219,6 +6856,7 @@ int main() {
             forceLayout = true;
         }
 
+        const bool textEditingActive = ImGui::GetIO().WantTextInput || ImGui::IsAnyItemActive();
         if (sceneData.loaded && IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_Z)) {
             applyUndo(sceneData, undoHistory, inspectorState);
         }
@@ -6227,6 +6865,25 @@ int main() {
         }
         if (sceneData.loaded && IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_S)) {
             saveSceneToDisk(sceneData);
+        }
+        if (sceneData.loaded &&
+            !textEditingActive &&
+            IsKeyDown(KEY_LEFT_CONTROL) &&
+            IsKeyPressed(KEY_D) &&
+            sceneData.selectionKind == EditorSelectionKind::Object &&
+            sceneData.selectedObject != nullptr) {
+            pushUndoSnapshot(sceneData, undoHistory);
+            duplicateSelectedObjectFromHierarchy(sceneData);
+        }
+        if (sceneData.loaded &&
+            !textEditingActive &&
+            IsKeyDown(KEY_LEFT_CONTROL) &&
+            IsKeyPressed(KEY_R) &&
+            sceneData.selectionKind == EditorSelectionKind::Object &&
+            sceneData.selectedObject != nullptr) {
+            pushUndoSnapshot(sceneData, undoHistory);
+            resetSelectedObjectToSceneCenter(sceneData);
+            syncInspectorTransformBuffers(inspectorState, sceneData);
         }
 
         flushEditorTask(backgroundTask, sceneData);
@@ -6276,6 +6933,21 @@ int main() {
             duplicateSelectedObjectFromHierarchy(sceneData);
         }
         if (menuActions.removeSelectedObject) {
+            pushUndoSnapshot(sceneData, undoHistory);
+            removeSelectedObjectFromHierarchy(sceneData);
+        }
+        if (menuActions.resetSelectedObjectPosition) {
+            pushUndoSnapshot(sceneData, undoHistory);
+            resetSelectedObjectToSceneCenter(sceneData);
+            syncInspectorTransformBuffers(inspectorState, sceneData);
+        }
+
+        const bool canDeleteSelectedObject =
+            sceneData.loaded &&
+            sceneData.selectionKind == EditorSelectionKind::Object &&
+            sceneData.selectedObject != nullptr &&
+            !textEditingActive;
+        if (canDeleteSelectedObject && IsKeyPressed(KEY_DELETE)) {
             pushUndoSnapshot(sceneData, undoHistory);
             removeSelectedObjectFromHierarchy(sceneData);
         }
@@ -6403,47 +7075,58 @@ int main() {
         }
         forceLayout = false;
 
-        auto runRequestedTask = [&](EditorTaskKind taskKind) {
+        auto runRequestedTask = [&](EditorTaskKind taskKind, bool showLoadingPopup) {
+            auto appendTaskMessage = [&](const std::string& line) {
+                if (taskKind != EditorTaskKind::RunDesktop) {
+                    appendBuildOutputLine(sceneData, line);
+                } else {
+                    appendConsoleLine(sceneData, line);
+                }
+            };
             if (backgroundTask.running.load()) {
-                appendConsoleLine(sceneData, "> Another background task is already running.");
+                appendTaskMessage("> Another background task is already running.");
                 return;
             }
             if (!sceneData.loaded) {
-                appendConsoleLine(sceneData, "> No scene is currently loaded.");
+                appendTaskMessage("> No scene is currently loaded.");
                 return;
             }
             applyBuildSettingsBuffers(buildSettings);
             if (taskKind != EditorTaskKind::RunDesktop && buildSettings.platformioPath.empty()) {
-                appendConsoleLine(sceneData, "> Configure the PlatformIO executable path before building.");
+                appendTaskMessage("> Configure the PlatformIO executable path before building.");
                 return;
             }
             if ((taskKind == EditorTaskKind::UploadNano || taskKind == EditorTaskKind::BuildAndUploadNano)
                 && !isValidUploadPort(buildSettings.uploadPort)) {
-                appendConsoleLine(sceneData, "> Configure a valid upload port before uploading.");
+                appendTaskMessage("> Configure a valid upload port before uploading.");
                 return;
             }
             if (sceneData.dirty && !saveSceneToDisk(sceneData)) {
-                appendConsoleLine(sceneData, "> Build flow stopped because Save Scene failed.");
+                appendTaskMessage("> Build flow stopped because Save Scene failed.");
                 return;
             }
             if (taskKind != EditorTaskKind::RunDesktop) {
                 sceneData.buildOutputLines.clear();
             }
-            startEditorTask(backgroundTask, sceneData, buildSettings, taskKind);
+            startEditorTask(backgroundTask, sceneData, buildSettings, taskKind, showLoadingPopup);
         };
 
-        if (modalActions.compileScene) {
-            runRequestedTask(EditorTaskKind::CompileScene);
+        if (toolbarActions.compileScene) {
+            runRequestedTask(EditorTaskKind::CompileScene, true);
+        } else if (toolbarActions.buildAndUploadNano) {
+            runRequestedTask(EditorTaskKind::BuildAndUploadNano, true);
+        } else if (modalActions.compileScene) {
+            runRequestedTask(EditorTaskKind::CompileScene, false);
         } else if (modalActions.buildNano) {
-            runRequestedTask(EditorTaskKind::BuildNano);
+            runRequestedTask(EditorTaskKind::BuildNano, false);
         } else if (modalActions.uploadNano) {
-            runRequestedTask(EditorTaskKind::UploadNano);
+            runRequestedTask(EditorTaskKind::UploadNano, false);
         } else if (modalActions.buildAndUploadNano) {
-            runRequestedTask(EditorTaskKind::BuildAndUploadNano);
+            runRequestedTask(EditorTaskKind::BuildAndUploadNano, false);
         } else if (viewportActions.runDesktop) {
-            runRequestedTask(EditorTaskKind::RunDesktop);
+            runRequestedTask(EditorTaskKind::RunDesktop, true);
         } else if (modalActions.runDesktop) {
-            runRequestedTask(EditorTaskKind::RunDesktop);
+            runRequestedTask(EditorTaskKind::RunDesktop, true);
         }
 
         rlImGuiEnd();

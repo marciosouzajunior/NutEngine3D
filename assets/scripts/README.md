@@ -132,6 +132,24 @@ Files in this directory own:
 For example, obstacle lanes, collision rules, difficulty, and game-over logic
 belong to `TunnelRunScript.cpp`, not to `RuntimeScene`.
 
+## Utility scripts
+
+The current reusable script set is:
+
+- `GameControllerScript`: placeholder root gameplay script for brand-new scenes.
+- `SpinScript`: rotates an object from a `rotationSpeed` vec3.
+- `AutoTranslateScript`: moves an object from a `unitsPerSecond` vec3.
+- `ClampPositionScript`: clamps one selected position axis between `minValue` and `maxValue`.
+- `PulseScaleScript`: animates a uniform scale pulse from `speed`, `minScale`, and `maxScale`.
+- `WrapPositionScript`: wraps one selected axis between `minValue` and `maxValue`.
+- `PlayerMoveScript`: applies joystick-driven movement for authored prototypes.
+- `TunnelRunScript`: owns the full Tunnel Run gameplay loop.
+
+New scenes created in the editor now start with one root `Game` object and a
+`GameControllerScript` already attached. It is intentionally a no-op native
+script so a new project can begin by editing one visible source file and
+keeping the same scene compiler/runtime flow used by shipped content.
+
 ## Adding a script
 
 To add another native script:

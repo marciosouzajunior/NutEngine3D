@@ -26,10 +26,14 @@ add_library(NutEngineRuntime STATIC
     src/core/Scene.cpp
     src/core/SceneManager.cpp
     src/core/Script.cpp
-    assets/scripts/DummyScript.cpp
+    assets/scripts/AutoTranslateScript.cpp
+    assets/scripts/ClampPositionScript.cpp
+    assets/scripts/GameControllerScript.cpp
+    assets/scripts/PulseScaleScript.cpp
     assets/scripts/SpinScript.cpp
     assets/scripts/PlayerMoveScript.cpp
     assets/scripts/TunnelRunScript.cpp
+    assets/scripts/WrapPositionScript.cpp
     assets/scripts/GameScriptDispatcher.cpp
     src/scene/RuntimeScene.cpp
     src/scene/SceneBinaryLoader.cpp

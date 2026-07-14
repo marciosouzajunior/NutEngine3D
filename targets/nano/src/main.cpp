@@ -155,7 +155,6 @@ void tickEngine() {
     g_scene.setInputState(readJoystickInput());
     nut::game::updateScripts(g_scene, dt);
     g_renderer->prepareFrame(g_scene);
-
     for (int page = 0; page < g_graphics.pageCount(); ++page) {
         // Each pass draws only one 8-pixel-tall OLED page.
         // present() flushes that page immediately over I2C.

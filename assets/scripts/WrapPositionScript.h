@@ -9,9 +9,9 @@ struct InputState;
 
 namespace game {
 
-struct DummyScript {
-    static constexpr uint16_t kScriptId = 2;
-    static constexpr const char* kTypeName = "DummyScript";
+struct WrapPositionScript {
+    static constexpr uint16_t kScriptId = 5;
+    static constexpr const char* kTypeName = "WrapPositionScript";
 
     static void update(
         CompiledScriptInstance& instance,

@@ -296,7 +296,7 @@ bool SceneBinaryLoader::load(
     NUT_TRACE_VALUE("loader-core: objects=", header.objectCount);
     NUT_TRACE_VALUE("loader-core: scripts=", header.scriptCount);
 
-    if (header.version != 2) {
+    if (header.version != 2 && header.version != 3) {
         logMessageValue(NUT_LOG_LITERAL("Unsupported scene binary version: "), header.version);
         return false;
     }
@@ -397,6 +397,15 @@ bool SceneBinaryLoader::load(
             || !reader.readU16(record.scriptCount)) {
             logMessage(NUT_LOG_LITERAL("Could not read object records."));
             return false;
+        }
+
+        if (header.version >= 3) {
+            if (!reader.readU8(record.enabled)) {
+                logMessage(NUT_LOG_LITERAL("Could not read object enabled state."));
+                return false;
+            }
+        } else {
+            record.enabled = 1;
         }
 
         for (float& value : record.position) {
@@ -550,6 +559,7 @@ bool SceneBinaryLoader::load(
         object->transform.position = math::Vec3(record.position[0], record.position[1], record.position[2]);
         object->transform.rotation = math::Vec3(record.rotation[0], record.rotation[1], record.rotation[2]);
         object->transform.scale = math::Vec3(record.scale[0], record.scale[1], record.scale[2]);
+        object->setEnabled(record.enabled != 0);
 
 #ifdef ARDUINO
         object->setMeshIndex(record.meshIndex);

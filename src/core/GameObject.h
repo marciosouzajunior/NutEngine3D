@@ -38,6 +38,7 @@ private:
 #ifdef ARDUINO
     int16_t m_meshIndex;
 #endif
+    bool m_enabled;
     Scene* m_scene;
 
 public:
@@ -57,6 +58,7 @@ public:
         , m_scripts()
         , m_children()
         , m_meshIndex(-1)
+        , m_enabled(true)
         , m_scene(nullptr)
         , transform()
         , mesh(nullptr)
@@ -65,6 +67,7 @@ public:
         : m_name(name)
         , m_scripts()
         , m_children()
+        , m_enabled(true)
         , m_scene(nullptr)
         , transform()
         , mesh(nullptr)
@@ -103,6 +106,14 @@ public:
 
     const Scene* scene() const {
         return m_scene;
+    }
+
+    bool isEnabled() const {
+        return m_enabled;
+    }
+
+    void setEnabled(bool enabled) {
+        m_enabled = enabled;
     }
 
     // Called by Scene when this object is added as a root object.
@@ -161,9 +172,11 @@ public:
 
     // Called by Scene when the scene becomes active.
     void startScripts() {
-        for (Script* script : m_scripts) {
-            if (script) {
-                script->onStart();
+        if (m_enabled) {
+            for (Script* script : m_scripts) {
+                if (script) {
+                    script->onStart();
+                }
             }
         }
 
@@ -176,9 +189,11 @@ public:
 
     // Called by Scene once per frame.
     void updateScripts(float deltaTime) {
-        for (Script* script : m_scripts) {
-            if (script) {
-                script->onUpdate(deltaTime);
+        if (m_enabled) {
+            for (Script* script : m_scripts) {
+                if (script) {
+                    script->onUpdate(deltaTime);
+                }
             }
         }
 

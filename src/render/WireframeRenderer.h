@@ -42,7 +42,7 @@ private:
         math::Mat4 mvpMatrix = viewProjMatrix * worldMatrix;
 
         // 3. If the object has a mesh, draw its edges
-        if (obj->mesh) {
+        if (obj->isEnabled() && obj->mesh) {
             drawMesh(obj->mesh, mvpMatrix);
         }
 

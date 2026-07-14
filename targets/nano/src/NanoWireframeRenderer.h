@@ -384,7 +384,7 @@ public:
             const math::Vec3 rootWorldRotation = root->transform.rotation;
             const RotationTrig rootWorldTrig = buildRotationTrig(rootWorldRotation);
 
-            if (root->meshIndex() >= 0) {
+            if (root->isEnabled() && root->meshIndex() >= 0) {
                 cacheBinaryMesh(scene, root, root->meshIndex(), rootWorldPosition, rootWorldTrig, cameraPosition, cameraViewTrig);
             }
 
@@ -408,7 +408,7 @@ public:
                     ? buildRotationTrig(rootWorldRotation + childRotation)
                     : rootWorldTrig;
 
-                if (child->meshIndex() >= 0) {
+                if (child->isEnabled() && child->meshIndex() >= 0) {
                     cacheBinaryMesh(scene, child, child->meshIndex(), childWorldPosition, childWorldTrig, cameraPosition, cameraViewTrig);
                 }
             }

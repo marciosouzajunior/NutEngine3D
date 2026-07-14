@@ -15,8 +15,12 @@
 #include "../../../src/core/Script.cpp"
 
 // Scripts available to scenes shipped in this firmware.
+#include "../../../assets/scripts/AutoTranslateScript.cpp"
+#include "../../../assets/scripts/ClampPositionScript.cpp"
+#include "../../../assets/scripts/GameControllerScript.cpp"
+#include "../../../assets/scripts/PulseScaleScript.cpp"
 #include "../../../assets/scripts/SpinScript.cpp"
-#include "../../../assets/scripts/DummyScript.cpp"
 #include "../../../assets/scripts/PlayerMoveScript.cpp"
 #include "../../../assets/scripts/TunnelRunScript.cpp"
+#include "../../../assets/scripts/WrapPositionScript.cpp"
 #include "../../../assets/scripts/GameScriptDispatcher.cpp"

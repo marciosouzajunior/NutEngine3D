@@ -3,11 +3,11 @@
     "fov": 60,
     "position": [
       0,
-      1.5,
+      5.22608,
       -8
     ],
     "rotation": [
-      0,
+      0.34721,
       0,
       0
     ]
@@ -16,12 +16,13 @@
   "objects": [
     {
       "children": [],
+      "enabled": true,
       "mesh": "assets/models/cube.obj",
-      "name": "GameObject",
+      "name": "Cloud",
       "position": [
+        3.0622,
         0,
-        1.49671,
-        0
+        15.6632
       ],
       "rotation": [
         0,
@@ -29,18 +30,135 @@
         0
       ],
       "scale": [
-        1,
-        1,
-        1
+        1.68088,
+        0.238023,
+        2.68212
       ],
       "scripts": [
         {
-          "rotationSpeed": [
+          "type": "AutoTranslateScript",
+          "unitsPerSecond": [
             0,
-            1,
-            0
-          ],
-          "type": "SpinScript"
+            0,
+            -5
+          ]
+        },
+        {
+          "axis": "z",
+          "maxValue": 15,
+          "minValue": -9,
+          "type": "WrapPositionScript"
+        }
+      ]
+    },
+    {
+      "children": [],
+      "enabled": true,
+      "mesh": "assets/models/cube.obj",
+      "name": "Cloud Copy",
+      "position": [
+        -2.96956,
+        0,
+        -3.80223
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        1.68088,
+        0.238023,
+        2.68212
+      ],
+      "scripts": [
+        {
+          "type": "AutoTranslateScript",
+          "unitsPerSecond": [
+            0,
+            0,
+            -5
+          ]
+        },
+        {
+          "axis": "z",
+          "maxValue": 15,
+          "minValue": -9,
+          "type": "WrapPositionScript"
+        }
+      ]
+    },
+    {
+      "children": [],
+      "enabled": true,
+      "mesh": "assets/models/cube.obj",
+      "name": "Cloud Copy",
+      "position": [
+        -3.00691,
+        0,
+        8.12462
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        1.68088,
+        0.238023,
+        4.86179
+      ],
+      "scripts": [
+        {
+          "type": "AutoTranslateScript",
+          "unitsPerSecond": [
+            0,
+            0,
+            -5
+          ]
+        },
+        {
+          "axis": "z",
+          "maxValue": 15,
+          "minValue": -9,
+          "type": "WrapPositionScript"
+        }
+      ]
+    },
+    {
+      "children": [],
+      "enabled": true,
+      "mesh": "assets/models/cube.obj",
+      "name": "Cloud Copy Copy",
+      "position": [
+        2.95077,
+        0,
+        2.51887
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        1.68088,
+        0.238023,
+        3.69075
+      ],
+      "scripts": [
+        {
+          "type": "AutoTranslateScript",
+          "unitsPerSecond": [
+            0,
+            0,
+            -5
+          ]
+        },
+        {
+          "axis": "z",
+          "maxValue": 15,
+          "minValue": -9,
+          "type": "WrapPositionScript"
         }
       ]
     }

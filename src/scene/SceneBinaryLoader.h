@@ -30,6 +30,7 @@ public:
         int16_t meshIndex;
         uint16_t firstScriptIndex;
         uint16_t scriptCount;
+        uint8_t enabled;
         float position[3];
         float rotation[3];
         float scale[3];
