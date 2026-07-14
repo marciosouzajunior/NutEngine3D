@@ -5,11 +5,14 @@
 
 #include <cstdint>
 #include <TextEditor.h>
+#include "EditorBuildSettings.h"
+#include "EditorSceneCatalog.h"
+#include "EditorUtils.h"
 
-#include "../../src/core/Camera.h"
-#include "../../src/core/ObjLoader.h"
-#include "../../src/scene/Json.h"
-#include "../scene_compiler/ScenePipeline.h"
+#include "../../../src/core/Camera.h"
+#include "../../../src/core/ObjLoader.h"
+#include "../../../src/scene/Json.h"
+#include "../../scene_compiler/ScenePipeline.h"
 
 #include <algorithm>
 #include <atomic>
@@ -41,6 +44,7 @@
 #define NOUSER
 #endif
 #include <windows.h>
+#include <tlhelp32.h>
 #endif
 
 namespace {
@@ -61,6 +65,9 @@ constexpr ImU32 AxisRed = IM_COL32(224, 86, 86, 255);
 constexpr ImU32 AxisGreen = IM_COL32(92, 190, 110, 255);
 constexpr ImU32 AxisBlue = IM_COL32(88, 150, 232, 255);
 } // namespace motif
+
+constexpr bool kDisableCustomBevelRendering = false;
+constexpr bool kDisableDesktopPatternRendering = true;
 
 struct EditorLayout {
     ImVec2 hierarchyPos;
@@ -207,10 +214,14 @@ struct ViewportTranslationGizmoInfo {
 };
 
 struct EditorUiActions {
+    bool newScene = false;
     bool resetLayout = false;
     bool undo = false;
     bool redo = false;
     bool saveScene = false;
+    bool saveSceneAs = false;
+    bool renameScene = false;
+    bool deleteScene = false;
     bool discardScene = false;
     bool addObject = false;
     bool duplicateSelectedObject = false;
@@ -234,27 +245,12 @@ enum class EditorTaskKind {
     RunDesktop
 };
 
-struct EditorBuildSettings {
-    std::string platformioPath;
-    std::string uploadPort = "COM5";
-    std::string selectedScenePath;
-    bool viewportCameraSaved = false;
-    float viewportOrbitTarget[3] = {0.0f, 0.0f, 0.0f};
-    float viewportOrbitYaw = 0.0f;
-    float viewportOrbitPitch = 0.0f;
-    float viewportOrbitDistance = 5.0f;
-    float viewportFov = 60.0f;
-    bool viewportShowGroundGrid = true;
-    bool viewportShowSceneCameraPreview = false;
-    char platformioPathBuffer[512] = {};
-    char uploadPortBuffer[64] = {};
-};
-
 struct EditorBackgroundTaskState {
     std::atomic<bool> running {false};
     std::atomic<bool> finished {false};
     std::mutex mutex;
     std::vector<std::string> pendingConsoleLines;
+    bool copyOutputToBuildPanel = false;
     bool success = false;
     bool updatedSceneAnalysis = false;
     bool limitsChanged = false;
@@ -266,6 +262,34 @@ struct EditorBackgroundTaskState {
 
 struct EditorBuildModalState {
     bool openRequested = false;
+};
+
+struct EditorExitPromptState {
+    bool openRequested = false;
+    bool pendingClose = false;
+};
+
+enum class EditorSceneFileDialogKind {
+    NewScene,
+    SaveAs,
+    Rename
+};
+
+struct EditorSceneFileDialogState {
+    bool openRequested = false;
+    EditorSceneFileDialogKind kind = EditorSceneFileDialogKind::NewScene;
+    char sceneNameBuffer[128] = {};
+    std::string errorMessage;
+};
+
+struct EditorDeleteSceneDialogState {
+    bool openRequested = false;
+    std::string errorMessage;
+};
+
+enum class AssetsConsoleView {
+    Console,
+    Assets
 };
 
 struct EditorUndoState {
@@ -320,6 +344,11 @@ void drawScriptSourceRow(const std::string& sourceDisplay, float labelWidth);
 void drawScriptSourceModal(const EditorScriptData& script, const std::string& sourcePath);
 std::string toAbsoluteProjectPath(const std::string& relativePath);
 std::string resolveSceneReferencedPath(const std::string& scenePathDisplay, const std::string& referencedPath);
+std::string getScriptSourcePath(const std::string& typeName);
+std::unique_ptr<EditorObjectData> makeDefaultObject();
+void refreshSceneObjectPaths(EditorSceneData& sceneData);
+void refreshSceneAssetReferences(EditorSceneData& sceneData);
+void drawAssetTree(const std::vector<std::string>& assetPaths);
 nut::math::Vec3 makeMathVec3(const float values[3]);
 nut::math::Mat4 makeEditorObjectLocalMatrix(const EditorObjectData& object);
 const nut::Mesh* getViewportMesh(const EditorSceneData& sceneData, const std::string& meshPath);
@@ -523,58 +552,7 @@ void markSceneDirty(EditorSceneData& sceneData);
 void syncInspectorTransformBuffers(InspectorState& inspectorState, const EditorSceneData& sceneData);
 void appendConsoleLine(EditorSceneData& sceneData, const std::string& line);
 void appendBuildOutputLine(EditorSceneData& sceneData, const std::string& line);
-std::string escapeJsonString(const std::string& value);
-
 bool updateSceneAnalysis(EditorSceneData& sceneData, bool logSummary);
-
-const std::vector<std::pair<const char*, const char*>>& availableEditorScenes() {
-    static const std::vector<std::pair<const char*, const char*>> scenes = {
-        {"Demo", "assets/scenes/demo.nutscene"},
-        {"Tunnel Run", "assets/scenes/tunnel_run.nutscene"}
-    };
-    return scenes;
-}
-
-std::string sceneDisplayNameForPath(const std::string& scenePath) {
-    for (const auto& entry : availableEditorScenes()) {
-        if (scenePath == entry.second) {
-            return entry.first;
-        }
-    }
-    return scenePath;
-}
-
-std::vector<std::string> availableEditorMeshPaths() {
-    namespace fs = std::filesystem;
-
-    std::vector<std::string> meshPaths;
-    const fs::path modelsDir = fs::path(toAbsoluteProjectPath("assets/models"));
-    if (!fs::exists(modelsDir) || !fs::is_directory(modelsDir)) {
-        return meshPaths;
-    }
-
-    for (const fs::directory_entry& entry : fs::directory_iterator(modelsDir)) {
-        if (!entry.is_regular_file()) {
-            continue;
-        }
-        if (entry.path().extension() != ".obj") {
-            continue;
-        }
-        meshPaths.push_back("assets/models/" + entry.path().filename().string());
-    }
-
-    std::sort(meshPaths.begin(), meshPaths.end());
-    return meshPaths;
-}
-
-bool isKnownEditorScenePath(const std::string& scenePath) {
-    for (const auto& entry : availableEditorScenes()) {
-        if (scenePath == entry.second) {
-            return true;
-        }
-    }
-    return false;
-}
 
 std::string buildObjectPath(const std::string& parentPath, const std::string& objectName, size_t siblingIndex) {
     std::ostringstream stream;
@@ -712,6 +690,9 @@ void applyMotifStyle() {
 }
 
 void drawRaisedBevel(ImDrawList* drawList, ImVec2 min, ImVec2 max) {
+    if (kDisableCustomBevelRendering) {
+        return;
+    }
     drawList->AddLine(min, ImVec2(max.x - 1.0f, min.y), motif::PanelLight);
     drawList->AddLine(min, ImVec2(min.x, max.y - 1.0f), motif::PanelLight);
     drawList->AddLine(ImVec2(min.x + 1.0f, max.y - 1.0f), max, motif::PanelShadow);
@@ -720,6 +701,9 @@ void drawRaisedBevel(ImDrawList* drawList, ImVec2 min, ImVec2 max) {
 }
 
 void drawSunkenBevel(ImDrawList* drawList, ImVec2 min, ImVec2 max) {
+    if (kDisableCustomBevelRendering) {
+        return;
+    }
     drawList->AddLine(min, ImVec2(max.x - 1.0f, min.y), motif::PanelShadow);
     drawList->AddLine(min, ImVec2(min.x, max.y - 1.0f), motif::PanelShadow);
     drawList->AddLine(ImVec2(min.x + 1.0f, max.y - 1.0f), max, motif::PanelLight);
@@ -727,6 +711,9 @@ void drawSunkenBevel(ImDrawList* drawList, ImVec2 min, ImVec2 max) {
 }
 
 void drawSunkenPanelFrame() {
+    if (kDisableCustomBevelRendering) {
+        return;
+    }
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     ImVec2 min = ImGui::GetItemRectMin();
     ImVec2 max = ImGui::GetItemRectMax();
@@ -734,6 +721,15 @@ void drawSunkenPanelFrame() {
 }
 
 void drawDesktopPattern() {
+    if (kDisableDesktopPatternRendering) {
+        ImGuiViewport* viewport = ImGui::GetMainViewport();
+        ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+        ImVec2 min = viewport->Pos;
+        ImVec2 max(min.x + viewport->Size.x, min.y + viewport->Size.y);
+        drawList->AddRectFilled(min, max, motif::DarkDesktop);
+        return;
+    }
+
     ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImDrawList* drawList = ImGui::GetBackgroundDrawList();
     ImVec2 min = viewport->Pos;
@@ -755,57 +751,6 @@ void applyPanelLayout(ImVec2 pos, ImVec2 size, bool forceLayout) {
     ImGuiCond condition = forceLayout ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
     ImGui::SetNextWindowPos(pos, condition);
     ImGui::SetNextWindowSize(size, condition);
-}
-
-bool readTextFile(const std::string& path, std::string& outText) {
-    std::ifstream file(path);
-    if (!file.is_open()) {
-        return false;
-    }
-
-    std::ostringstream stream;
-    stream << file.rdbuf();
-    outText = stream.str();
-    return true;
-}
-
-bool writeTextFile(const std::string& path, const std::string& text) {
-    std::ofstream file(path, std::ios::binary | std::ios::trunc);
-    if (!file.is_open()) {
-        return false;
-    }
-
-    file.write(text.data(), static_cast<std::streamsize>(text.size()));
-    return file.good();
-}
-
-bool fileExistsOnDisk(const std::string& path) {
-    std::ifstream file(path, std::ios::binary);
-    return file.good();
-}
-
-bool isValidUploadPort(const std::string& port) {
-    if (port.empty()) {
-        return false;
-    }
-
-    for (char c : port) {
-        if ((c >= 'a' && c <= 'z')
-            || (c >= 'A' && c <= 'Z')
-            || (c >= '0' && c <= '9')
-            || c == '_' || c == '-' || c == '.') {
-            continue;
-        }
-        return false;
-    }
-
-    return true;
-}
-
-std::string makeJsonKeyValue(const std::string& key, const std::string& value) {
-    std::ostringstream out;
-    out << "  \"" << escapeJsonString(key) << "\": \"" << escapeJsonString(value) << "\"";
-    return out.str();
 }
 
 #ifdef _WIN32
@@ -955,92 +900,61 @@ std::string resolveExecutableFromPath(const std::string& executableName) {
     return executableName;
 }
 
-std::string detectPlatformIoExecutable() {
-#ifdef _WIN32
-    std::vector<std::string> candidates;
-
-    const std::string userProfile = getEnvVarCopy("USERPROFILE");
-    if (!userProfile.empty()) {
-        candidates.push_back(joinWindowsPath(userProfile, ".platformio/penv/Scripts/platformio.exe"));
-    }
-
-    const std::string homeDrive = getEnvVarCopy("HOMEDRIVE");
-    const std::string homePath = getEnvVarCopy("HOMEPATH");
-    if (!homeDrive.empty() && !homePath.empty()) {
-        candidates.push_back(joinWindowsPath(homeDrive + homePath, ".platformio/penv/Scripts/platformio.exe"));
-    }
-
-    for (const std::string& candidate : candidates) {
-        if (fileExistsOnDisk(candidate)) {
-            return normalizePathSlashes(candidate);
-        }
-    }
-
-    char resolvedPath[MAX_PATH] = {};
-    const DWORD resolvedLength = SearchPathA(nullptr, "platformio.exe", nullptr, MAX_PATH, resolvedPath, nullptr);
-    if (resolvedLength > 0 && resolvedLength < MAX_PATH) {
-        return normalizePathSlashes(resolvedPath);
-    }
-#endif
-
-    return std::string();
-}
-
-std::string trimAsciiWhitespace(const std::string& text) {
-    size_t start = 0;
-    while (start < text.size() && std::isspace(static_cast<unsigned char>(text[start]))) {
-        ++start;
-    }
-
-    size_t end = text.size();
-    while (end > start && std::isspace(static_cast<unsigned char>(text[end - 1]))) {
-        --end;
-    }
-
-    return text.substr(start, end - start);
-}
-
-std::string defaultUploadPort() {
-    std::string platformIoIni;
-    if (readTextFile(toAbsoluteProjectPath("targets/nano/platformio.ini"), platformIoIni)) {
-        std::istringstream stream(platformIoIni);
-        std::string line;
-        while (std::getline(stream, line)) {
-            const std::string trimmed = trimAsciiWhitespace(line);
-            if (trimmed.rfind("upload_port", 0) != 0) {
-                continue;
-            }
-
-            const size_t equals = trimmed.find('=');
-            if (equals == std::string::npos) {
-                continue;
-            }
-
-            const std::string value = trimAsciiWhitespace(trimmed.substr(equals + 1));
-            if (!value.empty()) {
-                return value;
-            }
-        }
-    }
-
-    return "COM5";
-}
-
-std::string buildSettingsConfigPath() {
-    return std::string(NUT_PROJECT_ROOT) + "/tools/scene_editor/editor_user_settings.json";
-}
-
 std::string desktopExecutablePath() {
     return std::string(NUT_PROJECT_ROOT) + "/build/NutEngine3D.exe";
 }
 
-EditorBuildSettings makeDefaultBuildSettings() {
-    EditorBuildSettings settings;
-    settings.platformioPath = detectPlatformIoExecutable();
-    settings.uploadPort = defaultUploadPort();
-    settings.selectedScenePath = availableEditorScenes().front().second;
-    return settings;
+#ifdef _WIN32
+bool closeRunningDesktopSimulator(std::vector<std::string>& outLines) {
+    const DWORD currentProcessId = GetCurrentProcessId();
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) {
+        outLines.push_back("> Could not inspect running desktop simulator processes.");
+        return false;
+    }
+
+    PROCESSENTRY32 processEntry {};
+    processEntry.dwSize = sizeof(processEntry);
+    bool found = false;
+    bool terminated = false;
+
+    if (Process32First(snapshot, &processEntry)) {
+        do {
+            if (processEntry.th32ProcessID == currentProcessId) {
+                continue;
+            }
+            if (_stricmp(processEntry.szExeFile, "NutEngine3D.exe") != 0) {
+                continue;
+            }
+
+            found = true;
+            HANDLE processHandle = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, processEntry.th32ProcessID);
+            if (processHandle == nullptr) {
+                outLines.push_back("> Found a running desktop simulator, but it could not be closed.");
+                continue;
+            }
+
+            if (TerminateProcess(processHandle, 0)) {
+                WaitForSingleObject(processHandle, 2000);
+                terminated = true;
+            } else {
+                outLines.push_back("> Found a running desktop simulator, but termination failed.");
+            }
+            CloseHandle(processHandle);
+        } while (Process32Next(snapshot, &processEntry));
+    }
+
+    CloseHandle(snapshot);
+
+    if (terminated) {
+        outLines.push_back("> Closed the previous desktop simulator instance.");
+    } else if (!found) {
+        return true;
+    }
+
+    return !found || terminated;
 }
+#endif
 
 void applyViewportSettingsFromConfig(
     const EditorBuildSettings& settings,
@@ -1063,6 +977,46 @@ void applyViewportSettingsFromConfig(
     updateViewportCameraPose(viewportCameraState);
 }
 
+void applySceneViewportCameraSettings(
+    const EditorBuildSettings& settings,
+    const EditorSceneData& sceneData,
+    const std::string& scenePath,
+    ViewportCameraState& viewportCameraState
+) {
+    const auto it = settings.sceneViewportCameras.find(scenePath);
+    if (it == settings.sceneViewportCameras.end() || !it->second.cameraSaved) {
+        if (!settings.viewportCameraSaved) {
+            viewportCameraState.orbitTarget[0] = 0.0f;
+            viewportCameraState.orbitTarget[1] = 0.75f;
+            viewportCameraState.orbitTarget[2] = 0.0f;
+            viewportCameraState.orbitYaw = -0.75f;
+            viewportCameraState.orbitPitch = 0.45f;
+            viewportCameraState.orbitDistance = std::max(10.0f, std::fabs(sceneData.camera.position[2]) + 4.0f);
+            viewportCameraState.fov = sceneData.camera.fov;
+            updateViewportCameraPose(viewportCameraState);
+            return;
+        }
+        for (int i = 0; i < 3; ++i) {
+            viewportCameraState.orbitTarget[i] = settings.viewportOrbitTarget[i];
+        }
+        viewportCameraState.orbitYaw = settings.viewportOrbitYaw;
+        viewportCameraState.orbitPitch = settings.viewportOrbitPitch;
+        viewportCameraState.orbitDistance = settings.viewportOrbitDistance;
+        viewportCameraState.fov = settings.viewportFov;
+        updateViewportCameraPose(viewportCameraState);
+        return;
+    }
+
+    for (int i = 0; i < 3; ++i) {
+        viewportCameraState.orbitTarget[i] = it->second.orbitTarget[i];
+    }
+    viewportCameraState.orbitYaw = it->second.orbitYaw;
+    viewportCameraState.orbitPitch = it->second.orbitPitch;
+    viewportCameraState.orbitDistance = it->second.orbitDistance;
+    viewportCameraState.fov = it->second.fov;
+    updateViewportCameraPose(viewportCameraState);
+}
+
 void captureViewportSettings(
     EditorBuildSettings& settings,
     const ViewportCameraState& viewportCameraState,
@@ -1078,6 +1032,26 @@ void captureViewportSettings(
     settings.viewportFov = viewportCameraState.fov;
     settings.viewportShowGroundGrid = viewportDisplayState.showGroundGrid;
     settings.viewportShowSceneCameraPreview = viewportDisplayState.showSceneCameraPreview;
+}
+
+void captureSceneViewportCameraSettings(
+    EditorBuildSettings& settings,
+    const std::string& scenePath,
+    const ViewportCameraState& viewportCameraState
+) {
+    if (scenePath.empty()) {
+        return;
+    }
+
+    EditorBuildSettings::SceneViewportCameraSettings& sceneSettings = settings.sceneViewportCameras[scenePath];
+    sceneSettings.cameraSaved = true;
+    for (int i = 0; i < 3; ++i) {
+        sceneSettings.orbitTarget[i] = viewportCameraState.orbitTarget[i];
+    }
+    sceneSettings.orbitYaw = viewportCameraState.orbitYaw;
+    sceneSettings.orbitPitch = viewportCameraState.orbitPitch;
+    sceneSettings.orbitDistance = viewportCameraState.orbitDistance;
+    sceneSettings.fov = viewportCameraState.fov;
 }
 
 bool viewportSettingsDiffer(
@@ -1103,83 +1077,6 @@ bool viewportSettingsDiffer(
         std::fabs(settings.viewportFov - viewportCameraState.fov) > kEpsilon ||
         settings.viewportShowGroundGrid != viewportDisplayState.showGroundGrid ||
         settings.viewportShowSceneCameraPreview != viewportDisplayState.showSceneCameraPreview;
-}
-
-bool loadBuildSettings(EditorBuildSettings& settings, std::string& outMessage) {
-    settings = makeDefaultBuildSettings();
-
-    const std::string configPath = buildSettingsConfigPath();
-    std::string text;
-    if (!readTextFile(configPath, text)) {
-        if (settings.platformioPath.empty()) {
-            outMessage = "> Build settings: PlatformIO was not auto-detected. Configure the executable path in Build.";
-        } else {
-            outMessage = "> Build settings: using auto-detected PlatformIO path.";
-        }
-        return false;
-    }
-
-    nut::Json root;
-    std::string error;
-    if (!nut::Json::parse(text, root, &error) || !root.isObject()) {
-        outMessage = "> Build settings: local config is invalid. Using detected defaults.";
-        return false;
-    }
-
-    const std::string configuredPath = root.get("platformioPath").asString("");
-    const std::string configuredPort = root.get("uploadPort").asString("");
-    const std::string configuredScenePath = root.get("selectedScenePath").asString("");
-    const nut::Json& viewport = root.get("viewport");
-    if (!configuredPath.empty()) {
-        settings.platformioPath = configuredPath;
-    }
-    if (!configuredPort.empty()) {
-        settings.uploadPort = configuredPort;
-    }
-    if (isKnownEditorScenePath(configuredScenePath)) {
-        settings.selectedScenePath = configuredScenePath;
-    }
-    if (viewport.isObject()) {
-        settings.viewportCameraSaved = viewport.get("cameraSaved").asBool(false);
-        readVec3(
-            viewport.get("orbitTarget"),
-            settings.viewportOrbitTarget,
-            settings.viewportOrbitTarget
-        );
-        settings.viewportOrbitYaw = readFloat(viewport.get("orbitYaw"), settings.viewportOrbitYaw);
-        settings.viewportOrbitPitch = readFloat(viewport.get("orbitPitch"), settings.viewportOrbitPitch);
-        settings.viewportOrbitDistance = std::max(0.05f, readFloat(viewport.get("orbitDistance"), settings.viewportOrbitDistance));
-        settings.viewportFov = readFloat(viewport.get("fov"), settings.viewportFov);
-        settings.viewportShowGroundGrid = viewport.get("showGroundGrid").asBool(settings.viewportShowGroundGrid);
-        settings.viewportShowSceneCameraPreview =
-            viewport.get("showSceneCameraPreview").asBool(settings.viewportShowSceneCameraPreview);
-    }
-
-    outMessage = "> Build settings: loaded local user configuration.";
-    return true;
-}
-
-bool saveBuildSettings(const EditorBuildSettings& settings) {
-    std::ostringstream out;
-    out << "{\n";
-    out << makeJsonKeyValue("platformioPath", settings.platformioPath) << ",\n";
-    out << makeJsonKeyValue("uploadPort", settings.uploadPort) << ",\n";
-    out << makeJsonKeyValue("selectedScenePath", settings.selectedScenePath) << ",\n";
-    out << "  \"viewport\": {\n";
-    out << "    \"cameraSaved\": " << (settings.viewportCameraSaved ? "true" : "false") << ",\n";
-    out << "    \"orbitTarget\": ["
-        << settings.viewportOrbitTarget[0] << ", "
-        << settings.viewportOrbitTarget[1] << ", "
-        << settings.viewportOrbitTarget[2] << "],\n";
-    out << "    \"orbitYaw\": " << settings.viewportOrbitYaw << ",\n";
-    out << "    \"orbitPitch\": " << settings.viewportOrbitPitch << ",\n";
-    out << "    \"orbitDistance\": " << settings.viewportOrbitDistance << ",\n";
-    out << "    \"fov\": " << settings.viewportFov << ",\n";
-    out << "    \"showGroundGrid\": " << (settings.viewportShowGroundGrid ? "true" : "false") << ",\n";
-    out << "    \"showSceneCameraPreview\": " << (settings.viewportShowSceneCameraPreview ? "true" : "false") << "\n";
-    out << "  }\n";
-    out << "}\n";
-    return writeTextFile(buildSettingsConfigPath(), out.str());
 }
 
 float readFloat(const nut::Json& value, float defaultValue) {
@@ -1349,24 +1246,6 @@ void commitSceneJson(EditorSceneData& sceneData) {
     sceneData.rootJson = buildSceneJson(sceneData);
 }
 
-std::string escapeJsonString(const std::string& value) {
-    std::string escaped;
-    escaped.reserve(value.size() + 8);
-
-    for (char c : value) {
-        switch (c) {
-        case '\\': escaped += "\\\\"; break;
-        case '"': escaped += "\\\""; break;
-        case '\n': escaped += "\\n"; break;
-        case '\r': escaped += "\\r"; break;
-        case '\t': escaped += "\\t"; break;
-        default: escaped.push_back(c); break;
-        }
-    }
-
-    return escaped;
-}
-
 void appendJsonIndent(std::ostringstream& out, int indentLevel) {
     for (int i = 0; i < indentLevel; ++i) {
         out << "  ";
@@ -1471,6 +1350,147 @@ bool saveSceneToDisk(EditorSceneData& sceneData) {
     return true;
 }
 
+bool saveSceneToPath(
+    EditorSceneData& sceneData,
+    const std::string& scenePath,
+    const std::string& sceneName
+) {
+    if (!sceneData.loaded) {
+        appendConsoleLine(sceneData, "> Save As failed: no scene is currently loaded.");
+        return false;
+    }
+    if (!isValidSceneRelativePath(scenePath)) {
+        appendConsoleLine(sceneData, "> Save As failed: scene path must stay under assets/scenes and end with .nutscene.");
+        return false;
+    }
+
+    sceneData.scenePath = scenePath;
+    sceneData.sceneName = sceneName.empty() ? sceneData.sceneName : sceneName;
+    if (sceneData.assetPaths.empty()) {
+        sceneData.assetPaths.push_back(scenePath);
+    } else {
+        sceneData.assetPaths[0] = scenePath;
+    }
+    refreshSceneAssetReferences(sceneData);
+    commitSceneJson(sceneData);
+    const std::string outputPath = toAbsoluteProjectPath(sceneData.scenePath);
+    const std::string serialized = serializeJson(sceneData.rootJson);
+    if (!writeTextFile(outputPath, serialized)) {
+        appendConsoleLine(sceneData, "> Save As failed: could not write scene file.");
+        return false;
+    }
+
+    sceneData.dirty = false;
+    updateSceneAnalysis(sceneData, false);
+    appendConsoleLine(sceneData, "> Saved scene as: " + sceneData.scenePath);
+    return true;
+}
+
+bool deleteSceneFromDisk(
+    const std::string& scenePath,
+    std::string& outError
+) {
+    if (!isValidSceneRelativePath(scenePath)) {
+        outError = "Scene path is invalid.";
+        return false;
+    }
+
+    std::error_code errorCode;
+    const std::filesystem::path absolutePath = toAbsoluteProjectPath(scenePath);
+    if (!std::filesystem::exists(absolutePath)) {
+        outError = "Scene file was not found on disk.";
+        return false;
+    }
+    if (!std::filesystem::remove(absolutePath, errorCode)) {
+        outError = errorCode.message().empty() ? "Scene file could not be removed." : errorCode.message();
+        return false;
+    }
+
+    return true;
+}
+
+bool renameSceneOnDisk(
+    EditorSceneData& sceneData,
+    const std::string& targetScenePath,
+    const std::string& targetSceneName,
+    std::string& outError
+) {
+    if (!sceneData.loaded) {
+        outError = "No scene is currently loaded.";
+        return false;
+    }
+    if (!isValidSceneRelativePath(targetScenePath)) {
+        outError = "Target scene path is invalid.";
+        return false;
+    }
+
+    const std::string originalScenePath = sceneData.scenePath;
+    const std::string originalSceneName = sceneData.sceneName;
+    const std::string originalSerialized = serializeJson(sceneData.rootJson);
+    const std::string originalAbsolutePath = toAbsoluteProjectPath(originalScenePath);
+    const std::string targetAbsolutePath = toAbsoluteProjectPath(targetScenePath);
+
+    sceneData.scenePath = targetScenePath;
+    sceneData.sceneName = targetSceneName;
+    refreshSceneAssetReferences(sceneData);
+    commitSceneJson(sceneData);
+    const std::string renamedSerialized = serializeJson(sceneData.rootJson);
+
+    if (!writeTextFile(targetAbsolutePath, renamedSerialized)) {
+        sceneData.scenePath = originalScenePath;
+        sceneData.sceneName = originalSceneName;
+        refreshSceneAssetReferences(sceneData);
+        sceneData.rootJson = nut::Json();
+        std::string parseError;
+        nut::Json::parse(originalSerialized, sceneData.rootJson, &parseError);
+        outError = "Could not write the renamed scene file.";
+        return false;
+    }
+
+    if (targetScenePath != originalScenePath) {
+        std::error_code errorCode;
+        std::filesystem::remove(originalAbsolutePath, errorCode);
+        if (errorCode) {
+            outError = errorCode.message().empty() ? "Old scene file could not be removed." : errorCode.message();
+            return false;
+        }
+    }
+
+    sceneData.dirty = false;
+    updateSceneAnalysis(sceneData, false);
+    appendConsoleLine(sceneData, "> Renamed scene to: " + sceneData.scenePath);
+    return true;
+}
+
+void createEmptySceneData(EditorSceneData& sceneData, const std::string& scenePath, const std::string& sceneName) {
+    sceneData = EditorSceneData();
+    sceneData.loaded = true;
+    sceneData.scenePath = scenePath;
+    sceneData.sceneName = sceneName.empty() ? "Untitled" : sceneName;
+    sceneData.camera.position[0] = 0.0f;
+    sceneData.camera.position[1] = 1.5f;
+    sceneData.camera.position[2] = -8.0f;
+    sceneData.camera.rotation[0] = 0.0f;
+    sceneData.camera.rotation[1] = 0.0f;
+    sceneData.camera.rotation[2] = 0.0f;
+    sceneData.camera.fov = 60.0f;
+    std::unique_ptr<EditorObjectData> rootObject = makeDefaultObject();
+    rootObject->name = "GameObject";
+    sceneData.roots.push_back(std::move(rootObject));
+    refreshSceneObjectPaths(sceneData);
+    if (!sceneData.roots.empty() && sceneData.roots.front()) {
+        selectSingleObject(sceneData, sceneData.roots.front().get());
+    } else {
+        sceneData.selectionKind = EditorSelectionKind::SceneCamera;
+    }
+    sceneData.assetPaths.push_back(scenePath);
+    refreshSceneAssetReferences(sceneData);
+    sceneData.rootJson = buildSceneJson(sceneData);
+    updateSceneAnalysis(sceneData, false);
+    appendConsoleLine(sceneData, "> Created new scene in memory: " + sceneData.scenePath);
+    appendConsoleLine(sceneData, "> Save the scene to write the new file to disk.");
+}
+
 EditorScriptData parseScript(const nut::Json& scriptJson) {
     EditorScriptData script;
     script.scriptJson = scriptJson;
@@ -1507,7 +1527,9 @@ std::unique_ptr<EditorObjectData> parseObject(
     const nut::Json& scripts = objectJson.get("scripts");
     if (scripts.isArray()) {
         for (size_t i = 0; i < scripts.size(); ++i) {
-            object->scripts.push_back(parseScript(scripts.at(i)));
+            const EditorScriptData parsedScript = parseScript(scripts.at(i));
+            assets.insert(getScriptSourcePath(parsedScript.type));
+            object->scripts.push_back(parsedScript);
             ++scriptCount;
         }
     }
@@ -1538,18 +1560,54 @@ void appendBuildOutputLine(EditorSceneData& sceneData, const std::string& line) 
     sceneData.buildOutputLines.push_back(line);
 }
 
-std::string trimCopy(const std::string& text) {
-    size_t start = 0;
-    while (start < text.size() && std::isspace(static_cast<unsigned char>(text[start]))) {
-        ++start;
+std::string joinLinesForTextView(const std::vector<std::string>& lines) {
+    std::string text;
+    size_t totalBytes = 0;
+    for (const std::string& line : lines) {
+        totalBytes += line.size() + 1;
+    }
+    text.reserve(totalBytes);
+    for (size_t i = 0; i < lines.size(); ++i) {
+        text += lines[i];
+        if (i + 1 < lines.size()) {
+            text.push_back('\n');
+        }
+    }
+    return text;
+}
+
+void drawTaskLoadingPopup(const EditorBackgroundTaskState& taskState) {
+    if (!taskState.running.load()) {
+        return;
     }
 
-    size_t end = text.size();
-    while (end > start && std::isspace(static_cast<unsigned char>(text[end - 1]))) {
-        --end;
-    }
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(
+        ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f, viewport->Pos.y + viewport->Size.y * 0.5f),
+        ImGuiCond_Always,
+        ImVec2(0.5f, 0.5f)
+    );
+    ImGui::SetNextWindowSize(ImVec2(320.0f, 96.0f), ImGuiCond_Always);
 
-    return text.substr(start, end - start);
+    ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoTitleBar |
+        ImGuiWindowFlags_NoCollapse |
+        ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoSavedSettings;
+
+    bool keepOpen = true;
+    ImGui::OpenPopup("Working");
+    if (ImGui::BeginPopupModal("Working", &keepOpen, flags)) {
+        const std::string loadingLabel = "Working...";
+        const ImVec2 textSize = ImGui::CalcTextSize(loadingLabel.c_str());
+        const float centeredX = std::max(0.0f, (ImGui::GetContentRegionAvail().x - textSize.x) * 0.5f);
+        const float centeredY = std::max(0.0f, (ImGui::GetContentRegionAvail().y - textSize.y) * 0.5f);
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + centeredY);
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + centeredX);
+        ImGui::TextUnformatted(loadingLabel.c_str());
+        ImGui::EndPopup();
+    }
 }
 
 bool updateSceneAnalysis(EditorSceneData& sceneData, bool logSummary) {
@@ -1904,10 +1962,13 @@ EditorUiActions drawMainMenu(const EditorSceneData& sceneData, bool canUndo, boo
 
     if (ImGui::BeginMainMenuBar()) {
         if (ImGui::BeginMenu("File")) {
+            if (ImGui::MenuItem("New Scene", nullptr, false, true)) {
+                actions.newScene = true;
+            }
             if (ImGui::BeginMenu("Open Scene")) {
                 for (const auto& entry : availableEditorScenes()) {
                     const bool selected = sceneData.scenePath == entry.second;
-                    if (ImGui::MenuItem(entry.first, nullptr, selected)) {
+                    if (ImGui::MenuItem(entry.first.c_str(), nullptr, selected)) {
                         actions.requestedScenePath = entry.second;
                     }
                 }
@@ -1915,6 +1976,15 @@ EditorUiActions drawMainMenu(const EditorSceneData& sceneData, bool canUndo, boo
             }
             if (ImGui::MenuItem("Save", "Ctrl+S", false, sceneData.loaded)) {
                 actions.saveScene = true;
+            }
+            if (ImGui::MenuItem("Save As...", nullptr, false, sceneData.loaded)) {
+                actions.saveSceneAs = true;
+            }
+            if (ImGui::MenuItem("Rename Scene...", nullptr, false, sceneData.loaded && !isProtectedScenePath(sceneData.scenePath))) {
+                actions.renameScene = true;
+            }
+            if (ImGui::MenuItem("Delete Scene...", nullptr, false, sceneData.loaded && !isProtectedScenePath(sceneData.scenePath))) {
+                actions.deleteScene = true;
             }
             ImGui::EndMenu();
         }
@@ -1989,14 +2059,14 @@ EditorUiActions drawToolbar(float menuHeight, const EditorSceneData& sceneData, 
     if (ImGui::BeginCombo("##SceneSelector", currentSceneLabel.c_str())) {
         for (const auto& entry : availableEditorScenes()) {
             const bool selected = sceneData.scenePath == entry.second;
-            if (ImGui::Selectable(entry.first, selected)) {
+            if (ImGui::Selectable(entry.first.c_str(), selected)) {
                 actions.requestedScenePath = entry.second;
             }
             if (selected) {
                 ImGui::SetItemDefaultFocus();
             }
-    }
-    ImGui::EndCombo();
+        }
+        ImGui::EndCombo();
     }
     ImGui::SameLine();
 
@@ -2674,19 +2744,21 @@ void syncViewportCameraToScene(const EditorSceneData& sceneData, ViewportCameraS
     viewportCameraState.rotating = false;
 }
 
-void drawViewport(
+EditorUiActions drawViewport(
     const EditorLayout& layout,
     bool forceLayout,
     EditorSceneData& sceneData,
     InspectorState& inspectorState,
     EditorUndoHistory& undoHistory,
+    const EditorBackgroundTaskState& taskState,
     ViewportCameraState& viewportCameraState,
     ViewportDisplayState& viewportDisplayState,
     ViewportTransformGizmoState& viewportGizmoState
 ) {
+    EditorUiActions actions;
     applyPanelLayout(layout.viewportPos, layout.viewportSize, forceLayout);
 
-    ImGui::Begin("Viewport", nullptr, ImGuiWindowFlags_NoMove);
+    ImGui::Begin("Viewport");
     const float controlsHeight = ImGui::GetFrameHeight();
     const ImVec2 toolButtonSize(62.0f, 0.0f);
     const bool sceneCameraSelected = sceneData.selectionKind == EditorSelectionKind::SceneCamera;
@@ -2762,13 +2834,16 @@ void drawViewport(
         }
     }
     ImGui::SameLine();
-    const float rightButtonsWidth = 72.0f + ImGui::GetStyle().ItemSpacing.x + 72.0f;
+    const float rightButtonsWidth =
+        84.0f +
+        ImGui::GetStyle().ItemSpacing.x +
+        72.0f;
     const float rightButtonsX = ImGui::GetWindowContentRegionMax().x - rightButtonsWidth;
     if (ImGui::GetCursorPosX() < rightButtonsX) {
         ImGui::SetCursorPosX(rightButtonsX);
     }
-    if (ImGui::Button("Reset", ImVec2(72.0f, 0.0f))) {
-        syncViewportCameraToScene(sceneData, viewportCameraState);
+    if (ImGui::Button("Game", ImVec2(84.0f, 0.0f))) {
+        actions.runDesktop = true;
     }
     ImGui::SameLine();
     if (ImGui::Button("View", ImVec2(72.0f, 0.0f))) {
@@ -2777,12 +2852,15 @@ void drawViewport(
     if (ImGui::BeginPopup("Viewport View Menu")) {
         ImGui::MenuItem("Show Ground Grid", nullptr, &viewportDisplayState.showGroundGrid);
         ImGui::MenuItem("Show Scene Camera Preview", nullptr, &viewportDisplayState.showSceneCameraPreview);
+        ImGui::Separator();
+        if (ImGui::MenuItem("Reset Camera")) {
+            syncViewportCameraToScene(sceneData, viewportCameraState);
+        }
         ImGui::EndPopup();
     }
     if (ImGui::GetCursorPosY() < controlsHeight) {
         ImGui::Dummy(ImVec2(0.0f, controlsHeight - ImGui::GetCursorPosY()));
     }
-    ImGui::Separator();
 
     ImVec2 canvasPos = ImGui::GetCursorScreenPos();
     ImVec2 canvasSize = ImGui::GetContentRegionAvail();
@@ -3279,6 +3357,7 @@ void drawViewport(
 
     ImGui::Dummy(canvasSize);
     ImGui::End();
+    return actions;
 }
 
 void drawReadOnlyInputText(const char* label, const std::string& value) {
@@ -3303,6 +3382,87 @@ void drawLabeledReadOnlyInputText(const char* label, const std::string& value, f
 
 std::string getScriptSourcePath(const std::string& typeName) {
     return "assets/scripts/" + typeName + ".cpp";
+}
+
+void collectObjectAssetReferences(const EditorObjectData& object, std::set<std::string>& assets) {
+    if (!object.meshPath.empty()) {
+        assets.insert(object.meshPath);
+    }
+    for (const EditorScriptData& script : object.scripts) {
+        assets.insert(getScriptSourcePath(script.type));
+    }
+    for (const std::unique_ptr<EditorObjectData>& child : object.children) {
+        collectObjectAssetReferences(*child, assets);
+    }
+}
+
+void refreshSceneAssetReferences(EditorSceneData& sceneData) {
+    std::set<std::string> uniqueAssets;
+    if (!sceneData.scenePath.empty()) {
+        uniqueAssets.insert(sceneData.scenePath);
+    }
+    for (const std::unique_ptr<EditorObjectData>& root : sceneData.roots) {
+        collectObjectAssetReferences(*root, uniqueAssets);
+    }
+    sceneData.assetPaths.assign(uniqueAssets.begin(), uniqueAssets.end());
+}
+
+void drawAssetTree(const std::vector<std::string>& assetPaths) {
+    struct AssetTreeNode {
+        std::map<std::string, AssetTreeNode> children;
+        bool isFile = false;
+    };
+
+    auto splitPath = [](const std::string& path) {
+        std::vector<std::string> parts;
+        std::string current;
+        for (char ch : path) {
+            if (ch == '/' || ch == '\\') {
+                if (!current.empty()) {
+                    parts.push_back(current);
+                    current.clear();
+                }
+            } else {
+                current.push_back(ch);
+            }
+        }
+        if (!current.empty()) {
+            parts.push_back(current);
+        }
+        return parts;
+    };
+
+    AssetTreeNode root;
+    for (const std::string& assetPath : assetPaths) {
+        AssetTreeNode* node = &root;
+        const std::vector<std::string> parts = splitPath(assetPath);
+        for (size_t i = 0; i < parts.size(); ++i) {
+            AssetTreeNode& child = node->children[parts[i]];
+            if (i + 1 == parts.size()) {
+                child.isFile = true;
+            }
+            node = &child;
+        }
+    }
+
+    const auto drawNode = [&] (const auto& self, const AssetTreeNode& node, const std::string& label) -> void {
+        if (node.children.empty() || node.isFile) {
+            ImGui::BulletText("%s", label.c_str());
+            return;
+        }
+
+        const ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth;
+        if (ImGui::TreeNodeEx(label.c_str(), flags)) {
+            for (const auto& child : node.children) {
+                self(self, child.second, child.first);
+            }
+            ImGui::TreePop();
+        }
+    };
+
+    for (const auto& child : root.children) {
+        drawNode(drawNode, child.second, child.first);
+    }
 }
 
 std::string resolveSceneReferencedPath(const std::string& scenePathDisplay, const std::string& referencedPath) {
@@ -4810,16 +4970,6 @@ void moveSelectedObjectInHierarchy(EditorSceneData& sceneData, int direction) {
         : "> Moved selected object down.");
 }
 
-void syncBuildSettingsBuffers(EditorBuildSettings& settings) {
-    std::snprintf(settings.platformioPathBuffer, sizeof(settings.platformioPathBuffer), "%s", settings.platformioPath.c_str());
-    std::snprintf(settings.uploadPortBuffer, sizeof(settings.uploadPortBuffer), "%s", settings.uploadPort.c_str());
-}
-
-void applyBuildSettingsBuffers(EditorBuildSettings& settings) {
-    settings.platformioPath = settings.platformioPathBuffer;
-    settings.uploadPort = settings.uploadPortBuffer;
-}
-
 std::string activeTaskLabel(EditorTaskKind taskKind) {
     switch (taskKind) {
     case EditorTaskKind::CompileScene:
@@ -4834,6 +4984,294 @@ std::string activeTaskLabel(EditorTaskKind taskKind) {
         return "Run Desktop";
     }
     return "Task";
+}
+
+void openSceneFileDialog(
+    EditorSceneFileDialogState& dialogState,
+    EditorSceneFileDialogKind kind,
+    const EditorSceneData& sceneData
+) {
+    dialogState.openRequested = true;
+    dialogState.kind = kind;
+    dialogState.errorMessage.clear();
+    if (kind == EditorSceneFileDialogKind::NewScene) {
+        std::snprintf(dialogState.sceneNameBuffer, sizeof(dialogState.sceneNameBuffer), "%s", "NewScene");
+        return;
+    }
+    if (kind == EditorSceneFileDialogKind::Rename) {
+        std::snprintf(dialogState.sceneNameBuffer, sizeof(dialogState.sceneNameBuffer), "%s", sceneData.sceneName.c_str());
+        return;
+    }
+
+    const std::string currentName = sceneData.sceneName.empty() ? "SceneCopy" : sceneData.sceneName + " Copy";
+    std::snprintf(dialogState.sceneNameBuffer, sizeof(dialogState.sceneNameBuffer), "%s", currentName.c_str());
+}
+
+bool drawSceneFileDialog(
+    EditorSceneFileDialogState& dialogState,
+    EditorSceneData& sceneData,
+    EditorBuildSettings& buildSettings,
+    InspectorState& inspectorState,
+    ViewportCameraState& viewportCameraState,
+    ViewportDisplayState& viewportDisplayState,
+    EditorUndoHistory& undoHistory,
+    bool& forceLayout
+) {
+    const char* popupTitle =
+        dialogState.kind == EditorSceneFileDialogKind::NewScene
+            ? "New Scene"
+            : dialogState.kind == EditorSceneFileDialogKind::Rename
+                ? "Rename Scene"
+                : "Save Scene As";
+    if (dialogState.openRequested) {
+        ImGui::OpenPopup(popupTitle);
+        dialogState.openRequested = false;
+    }
+
+    bool changedScene = false;
+    bool keepOpen = true;
+    if (!ImGui::BeginPopupModal(popupTitle, &keepOpen, ImGuiWindowFlags_AlwaysAutoResize)) {
+        return false;
+    }
+    if (!keepOpen) {
+        dialogState.errorMessage.clear();
+        ImGui::EndPopup();
+        return false;
+    }
+
+    ImGui::TextUnformatted(
+        dialogState.kind == EditorSceneFileDialogKind::NewScene
+            ? "Create a new scene under assets/scenes."
+            : dialogState.kind == EditorSceneFileDialogKind::Rename
+                ? "Rename the current scene under assets/scenes."
+                : "Save the current scene to a new .nutscene file."
+    );
+    ImGui::SetNextItemWidth(340.0f);
+    ImGui::InputText("Scene Name", dialogState.sceneNameBuffer, sizeof(dialogState.sceneNameBuffer));
+    const std::string sceneName = trimCopy(dialogState.sceneNameBuffer);
+    const std::string scenePath = slugifySceneName(sceneName);
+    char scenePathBuffer[256] = {};
+    std::snprintf(scenePathBuffer, sizeof(scenePathBuffer), "%s", scenePath.c_str());
+    ImGui::SetNextItemWidth(340.0f);
+    ImGui::BeginDisabled();
+    ImGui::InputText("Scene Path", scenePathBuffer, sizeof(scenePathBuffer), ImGuiInputTextFlags_ReadOnly);
+    ImGui::EndDisabled();
+
+    if (!dialogState.errorMessage.empty()) {
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.45f, 0.10f, 0.10f, 1.0f), "%s", dialogState.errorMessage.c_str());
+    }
+
+    ImGui::Spacing();
+    const char* confirmLabel =
+        dialogState.kind == EditorSceneFileDialogKind::NewScene
+            ? "Create Scene"
+            : dialogState.kind == EditorSceneFileDialogKind::Rename
+                ? "Rename Scene"
+                : "Save As";
+    if (ImGui::Button(confirmLabel, ImVec2(140.0f, 0.0f))) {
+        if (sceneName.empty()) {
+            dialogState.errorMessage = "Scene name is required.";
+        } else if (!isValidSceneRelativePath(scenePath)) {
+            dialogState.errorMessage = "Generated scene path is invalid.";
+        } else if (dialogState.kind == EditorSceneFileDialogKind::NewScene &&
+                   std::filesystem::exists(toAbsoluteProjectPath(scenePath))) {
+            dialogState.errorMessage = "A scene with this name already exists.";
+        } else if (dialogState.kind == EditorSceneFileDialogKind::Rename &&
+                   scenePath != sceneData.scenePath &&
+                   std::filesystem::exists(toAbsoluteProjectPath(scenePath))) {
+            dialogState.errorMessage = "A scene with this name already exists.";
+        } else {
+            dialogState.errorMessage.clear();
+            if (dialogState.kind == EditorSceneFileDialogKind::NewScene) {
+                createEmptySceneData(sceneData, scenePath, sceneName);
+                if (saveSceneToPath(sceneData, scenePath, sceneName)) {
+                    undoHistory.undoStack.clear();
+                    undoHistory.redoStack.clear();
+                    syncInspectorState(inspectorState, sceneData);
+                    syncInspectorTransformBuffers(inspectorState, sceneData);
+                    syncViewportCameraToScene(sceneData, viewportCameraState);
+                    if (buildSettings.viewportCameraSaved) {
+                        applyViewportSettingsFromConfig(buildSettings, viewportCameraState, viewportDisplayState);
+                    }
+                    applySceneViewportCameraSettings(buildSettings, sceneData, scenePath, viewportCameraState);
+                    buildSettings.selectedScenePath = scenePath;
+                    captureViewportSettings(buildSettings, viewportCameraState, viewportDisplayState);
+                    captureSceneViewportCameraSettings(buildSettings, scenePath, viewportCameraState);
+                    saveBuildSettings(buildSettings);
+                    applyScriptExpansionStates(sceneData.roots, g_scriptExpansionStates);
+                    g_scriptExpansionSceneData = &sceneData;
+                    forceLayout = true;
+                    changedScene = true;
+                    ImGui::CloseCurrentPopup();
+                }
+            } else if (dialogState.kind == EditorSceneFileDialogKind::Rename) {
+                std::string renameError;
+                if (!renameSceneOnDisk(sceneData, scenePath, sceneName, renameError)) {
+                    dialogState.errorMessage = "Rename failed: " + renameError;
+                } else {
+                    buildSettings.selectedScenePath = scenePath;
+                    captureSceneViewportCameraSettings(buildSettings, scenePath, viewportCameraState);
+                    saveBuildSettings(buildSettings);
+                    changedScene = true;
+                    ImGui::CloseCurrentPopup();
+                }
+            } else if (saveSceneToPath(sceneData, scenePath, sceneName)) {
+                buildSettings.selectedScenePath = scenePath;
+                captureSceneViewportCameraSettings(buildSettings, scenePath, viewportCameraState);
+                saveBuildSettings(buildSettings);
+                changedScene = true;
+                ImGui::CloseCurrentPopup();
+            }
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(90.0f, 0.0f))) {
+        dialogState.errorMessage.clear();
+        ImGui::CloseCurrentPopup();
+    }
+
+    ImGui::EndPopup();
+    return changedScene;
+}
+
+bool drawExitPromptDialog(
+    EditorExitPromptState& promptState,
+    EditorSceneData& sceneData
+) {
+    if (promptState.openRequested) {
+        ImGui::OpenPopup("Unsaved Changes");
+        promptState.openRequested = false;
+    }
+
+    bool shouldExit = false;
+    if (!ImGui::BeginPopupModal("Unsaved Changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        return false;
+    }
+
+    ImGui::TextWrapped("You have unsaved scene changes. Save before closing?");
+    ImGui::Spacing();
+    if (ImGui::Button("Save & Exit", ImVec2(120.0f, 0.0f))) {
+        if (saveSceneToDisk(sceneData)) {
+            shouldExit = true;
+            promptState.pendingClose = false;
+            ImGui::CloseCurrentPopup();
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Discard", ImVec2(100.0f, 0.0f))) {
+        shouldExit = true;
+        promptState.pendingClose = false;
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(90.0f, 0.0f))) {
+        promptState.pendingClose = false;
+        ImGui::CloseCurrentPopup();
+    }
+
+    ImGui::EndPopup();
+    return shouldExit;
+}
+
+bool drawDeleteSceneDialog(
+    EditorDeleteSceneDialogState& dialogState,
+    EditorSceneData& sceneData,
+    EditorBuildSettings& buildSettings,
+    InspectorState& inspectorState,
+    ViewportCameraState& viewportCameraState,
+    ViewportDisplayState& viewportDisplayState,
+    EditorUndoHistory& undoHistory,
+    bool& forceLayout
+) {
+    if (dialogState.openRequested) {
+        ImGui::OpenPopup("Delete Scene");
+        dialogState.openRequested = false;
+    }
+
+    if (!ImGui::BeginPopupModal("Delete Scene", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        return false;
+    }
+
+    const std::vector<std::pair<std::string, std::string>> scenes = availableEditorScenes();
+    const bool isProtectedScene = isProtectedScenePath(sceneData.scenePath);
+    const bool canDelete = scenes.size() > 1 && isValidSceneRelativePath(sceneData.scenePath) && !isProtectedScene;
+    ImGui::TextWrapped("Delete the current scene from assets/scenes?");
+    ImGui::Spacing();
+    ImGui::TextDisabled("%s", sceneData.scenePath.c_str());
+    if (sceneData.dirty) {
+        ImGui::Spacing();
+        ImGui::TextDisabled("Unsaved changes in this scene will be lost.");
+    }
+    if (isProtectedScene) {
+        ImGui::Spacing();
+        ImGui::TextDisabled("The demo scene is protected and cannot be deleted.");
+    } else if (!canDelete) {
+        ImGui::Spacing();
+        ImGui::TextDisabled("At least one scene must remain available.");
+    }
+    if (!dialogState.errorMessage.empty()) {
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.45f, 0.10f, 0.10f, 1.0f), "%s", dialogState.errorMessage.c_str());
+    }
+
+    bool changedScene = false;
+    ImGui::Spacing();
+    if (!canDelete) {
+        ImGui::BeginDisabled();
+    }
+    if (ImGui::Button("Delete", ImVec2(120.0f, 0.0f))) {
+        dialogState.errorMessage.clear();
+        const std::string deletedScenePath = sceneData.scenePath;
+        std::string deleteError;
+        if (!deleteSceneFromDisk(deletedScenePath, deleteError)) {
+            dialogState.errorMessage = "Delete failed: " + deleteError;
+        } else {
+            std::string nextScenePath;
+            for (const auto& entry : availableEditorScenes()) {
+                if (entry.second != deletedScenePath) {
+                    nextScenePath = entry.second;
+                    break;
+                }
+            }
+
+            if (nextScenePath.empty()) {
+                dialogState.errorMessage = "Delete succeeded, but no replacement scene was found.";
+            } else {
+                loadSceneData(sceneData, toAbsoluteProjectPath(nextScenePath), nextScenePath);
+                undoHistory.undoStack.clear();
+                undoHistory.redoStack.clear();
+                syncInspectorState(inspectorState, sceneData);
+                syncInspectorTransformBuffers(inspectorState, sceneData);
+                syncViewportCameraToScene(sceneData, viewportCameraState);
+                if (buildSettings.viewportCameraSaved) {
+                    applyViewportSettingsFromConfig(buildSettings, viewportCameraState, viewportDisplayState);
+                }
+                applySceneViewportCameraSettings(buildSettings, sceneData, nextScenePath, viewportCameraState);
+                buildSettings.selectedScenePath = nextScenePath;
+                captureViewportSettings(buildSettings, viewportCameraState, viewportDisplayState);
+                captureSceneViewportCameraSettings(buildSettings, nextScenePath, viewportCameraState);
+                saveBuildSettings(buildSettings);
+                applyScriptExpansionStates(sceneData.roots, g_scriptExpansionStates);
+                g_scriptExpansionSceneData = &sceneData;
+                appendConsoleLine(sceneData, "> Deleted scene: " + deletedScenePath);
+                forceLayout = true;
+                changedScene = true;
+                ImGui::CloseCurrentPopup();
+            }
+        }
+    }
+    if (!canDelete) {
+        ImGui::EndDisabled();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(90.0f, 0.0f))) {
+        dialogState.errorMessage.clear();
+        ImGui::CloseCurrentPopup();
+    }
+
+    ImGui::EndPopup();
+    return changedScene;
 }
 
 bool compileSceneForNano(
@@ -4955,6 +5393,11 @@ bool runPlatformIoClean(const EditorBuildSettings& settings, std::vector<std::st
 
 bool buildDesktopExecutable(std::vector<std::string>& outLines) {
 #ifdef _WIN32
+    if (!closeRunningDesktopSimulator(outLines)) {
+        outLines.push_back("> Desktop build failed: close the previous simulator instance and try again.");
+        return false;
+    }
+
     const std::string cmakeExecutable = resolveExecutableFromPath("cmake.exe");
     std::vector<std::string> args {
         "--build",
@@ -4980,6 +5423,11 @@ bool launchDesktopExecutable(std::vector<std::string>& outLines) {
     const std::string executablePath = desktopExecutablePath();
     if (!fileExistsOnDisk(executablePath)) {
         outLines.push_back("> Desktop launch failed: build/NutEngine3D.exe was not found.");
+        return false;
+    }
+
+    if (!closeRunningDesktopSimulator(outLines)) {
+        outLines.push_back("> Desktop launch failed: close the previous simulator instance and try again.");
         return false;
     }
 
@@ -5032,6 +5480,7 @@ void startEditorTask(
     {
         std::lock_guard<std::mutex> lock(taskState.mutex);
         taskState.pendingConsoleLines.clear();
+        taskState.copyOutputToBuildPanel = taskKind != EditorTaskKind::RunDesktop;
         taskState.finished = false;
         taskState.success = false;
         taskState.updatedSceneAnalysis = false;
@@ -5149,7 +5598,9 @@ void flushEditorTask(EditorBackgroundTaskState& taskState, EditorSceneData& scen
         std::lock_guard<std::mutex> lock(taskState.mutex);
         for (const std::string& line : taskState.pendingConsoleLines) {
             appendConsoleLine(sceneData, line);
-            appendBuildOutputLine(sceneData, line);
+            if (taskState.copyOutputToBuildPanel) {
+                appendBuildOutputLine(sceneData, line);
+            }
         }
         taskState.pendingConsoleLines.clear();
 
@@ -5385,7 +5836,6 @@ void drawInspector(
         }
         ImGui::EndCombo();
     }
-
     if (drawVec3TextFields("Position", object.position, inspectorState.positionBuffers)) {
         prepareUndo();
         markSceneDirty(sceneData);
@@ -5454,32 +5904,52 @@ void drawInspector(
 EditorUiActions drawAssetsConsole(
     const EditorLayout& layout,
     bool forceLayout,
-    const EditorSceneData& sceneData
+    EditorSceneData& sceneData,
+    AssetsConsoleView& view
 ) {
     EditorUiActions actions;
     applyPanelLayout(layout.assetsPos, layout.assetsSize, forceLayout);
 
-    ImGui::Begin("Assets / Console");
-    if (ImGui::BeginTabBar("AssetsConsoleTabs")) {
-        if (ImGui::BeginTabItem("Assets")) {
+    ImGui::Begin("Console / Assets");
+    if (ImGui::Button("Console", ImVec2(92.0f, 0.0f))) {
+        view = AssetsConsoleView::Console;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Assets", ImVec2(92.0f, 0.0f))) {
+        view = AssetsConsoleView::Assets;
+    }
+
+    if (view == AssetsConsoleView::Console) {
+        const float clearButtonWidth = 72.0f;
+        const float clearButtonX = ImGui::GetWindowContentRegionMax().x - clearButtonWidth;
+        if (ImGui::GetCursorPosX() < clearButtonX) {
+            ImGui::SameLine(clearButtonX);
+        } else {
+            ImGui::SameLine();
+        }
+        if (ImGui::Button("Clear", ImVec2(clearButtonWidth, 0.0f))) {
+            sceneData.consoleLines.clear();
+        }
+
+        std::string consoleText = joinLinesForTextView(sceneData.consoleLines);
+        std::vector<char> consoleBuffer(consoleText.begin(), consoleText.end());
+        consoleBuffer.push_back('\0');
+        ImGui::InputTextMultiline(
+            "##SceneConsoleText",
+            consoleBuffer.data(),
+            consoleBuffer.size(),
+            ImVec2(-FLT_MIN, -FLT_MIN),
+            ImGuiInputTextFlags_ReadOnly
+        );
+    } else {
+        if (ImGui::BeginChild("SceneAssetsPanel", ImVec2(0.0f, 0.0f), true)) {
             if (sceneData.assetPaths.empty()) {
                 ImGui::TextDisabled("No assets referenced.");
             } else {
-                for (const std::string& assetPath : sceneData.assetPaths) {
-                    ImGui::BulletText("%s", assetPath.c_str());
-                }
+                drawAssetTree(sceneData.assetPaths);
             }
-            ImGui::EndTabItem();
         }
-
-        if (ImGui::BeginTabItem("Console")) {
-            for (const std::string& line : sceneData.consoleLines) {
-                ImGui::TextUnformatted(line.c_str());
-            }
-            ImGui::EndTabItem();
-        }
-
-        ImGui::EndTabBar();
+        ImGui::EndChild();
     }
     ImGui::End();
     return actions;
@@ -5629,10 +6099,6 @@ EditorUiActions drawBuildModal(
         if (ImGui::Button("Build & Upload", ImVec2(140.0f, 0.0f))) {
             actions.buildAndUploadNano = true;
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Run Desktop", ImVec2(140.0f, 0.0f))) {
-            actions.runDesktop = true;
-        }
     }
 
     ImGui::Spacing();
@@ -5678,6 +6144,7 @@ int main() {
 
     rlImGuiBeginInitImGui();
     ImGuiIO& io = ImGui::GetIO();
+    io.ConfigWindowsMoveFromTitleBarOnly = true;
     static const std::string editorIniPath = std::string(NUT_PROJECT_ROOT) + "/tools/scene_editor/nutscene_editor.ini";
     const bool hasSavedLayout = FileExists(editorIniPath.c_str());
 
@@ -5707,22 +6174,27 @@ int main() {
     ViewportCameraState viewportCameraState;
     ViewportDisplayState viewportDisplayState;
     ViewportTransformGizmoState viewportGizmoState;
+    AssetsConsoleView assetsConsoleView = AssetsConsoleView::Console;
     EditorBuildSettings buildSettings = makeDefaultBuildSettings();
     syncBuildSettingsBuffers(buildSettings);
     EditorBackgroundTaskState backgroundTask;
     EditorBuildModalState buildModalState;
+    EditorExitPromptState exitPromptState;
+    EditorDeleteSceneDialogState deleteSceneDialogState;
+    EditorSceneFileDialogState sceneFileDialogState;
     std::string buildSettingsMessage;
     loadBuildSettings(buildSettings, buildSettingsMessage);
     syncBuildSettingsBuffers(buildSettings);
     const std::string scenePath = isKnownEditorScenePath(buildSettings.selectedScenePath)
         ? buildSettings.selectedScenePath
-        : availableEditorScenes().front().second;
+        : defaultEditorScenePath();
     const std::string scenePathOnDisk = std::string(NUT_PROJECT_ROOT) + "/" + scenePath;
     loadSceneData(sceneData, scenePathOnDisk, scenePath);
     undoHistory.undoStack.clear();
     undoHistory.redoStack.clear();
     syncViewportCameraToScene(sceneData, viewportCameraState);
     applyViewportSettingsFromConfig(buildSettings, viewportCameraState, viewportDisplayState);
+    applySceneViewportCameraSettings(buildSettings, sceneData, scenePath, viewportCameraState);
     buildSettings.selectedScenePath = scenePath;
     if (!buildSettingsMessage.empty()) {
         appendConsoleLine(sceneData, buildSettingsMessage);
@@ -5730,7 +6202,18 @@ int main() {
     applyScriptExpansionStates(sceneData.roots, g_scriptExpansionStates);
     g_scriptExpansionSceneData = &sceneData;
 
-    while (!WindowShouldClose()) {
+    bool shouldQuit = false;
+    while (!shouldQuit) {
+        if (!exitPromptState.pendingClose && WindowShouldClose()) {
+            if (sceneData.dirty) {
+                exitPromptState.openRequested = true;
+                exitPromptState.pendingClose = true;
+            } else {
+                shouldQuit = true;
+                continue;
+            }
+        }
+
         if (IsKeyPressed(KEY_F11)) {
             ToggleFullscreen();
             forceLayout = true;
@@ -5758,6 +6241,13 @@ int main() {
         if (menuActions.resetLayout) {
             forceLayout = true;
         }
+        if (menuActions.newScene) {
+            if (sceneData.dirty) {
+                appendConsoleLine(sceneData, "> Save or discard the current scene before creating a new one.");
+            } else {
+                openSceneFileDialog(sceneFileDialogState, EditorSceneFileDialogKind::NewScene, sceneData);
+            }
+        }
         if (menuActions.undo) {
             applyUndo(sceneData, undoHistory, inspectorState);
         }
@@ -5766,6 +6256,16 @@ int main() {
         }
         if (menuActions.saveScene) {
             saveSceneToDisk(sceneData);
+        }
+        if (menuActions.saveSceneAs) {
+            openSceneFileDialog(sceneFileDialogState, EditorSceneFileDialogKind::SaveAs, sceneData);
+        }
+        if (menuActions.renameScene) {
+            openSceneFileDialog(sceneFileDialogState, EditorSceneFileDialogKind::Rename, sceneData);
+        }
+        if (menuActions.deleteScene) {
+            deleteSceneDialogState.openRequested = true;
+            deleteSceneDialogState.errorMessage.clear();
         }
         if (menuActions.addObject) {
             pushUndoSnapshot(sceneData, undoHistory);
@@ -5808,6 +6308,7 @@ int main() {
                     if (buildSettings.viewportCameraSaved) {
                         applyViewportSettingsFromConfig(buildSettings, viewportCameraState, viewportDisplayState);
                     }
+                    applySceneViewportCameraSettings(buildSettings, sceneData, sceneData.scenePath, viewportCameraState);
                 }
             }
         }
@@ -5829,7 +6330,10 @@ int main() {
                 undoHistory.redoStack.clear();
                 syncViewportCameraToScene(sceneData, viewportCameraState);
                 buildSettings.selectedScenePath = requestedScenePath;
+                applyViewportSettingsFromConfig(buildSettings, viewportCameraState, viewportDisplayState);
+                applySceneViewportCameraSettings(buildSettings, sceneData, requestedScenePath, viewportCameraState);
                 captureViewportSettings(buildSettings, viewportCameraState, viewportDisplayState);
+                captureSceneViewportCameraSettings(buildSettings, requestedScenePath, viewportCameraState);
                 saveBuildSettings(buildSettings);
                 applyScriptExpansionStates(sceneData.roots, g_scriptExpansionStates);
                 g_scriptExpansionSceneData = &sceneData;
@@ -5854,14 +6358,49 @@ int main() {
             pushUndoSnapshot(sceneData, undoHistory);
             moveSelectedObjectInHierarchy(sceneData, 1);
         }
-        drawViewport(layout, forceLayout, sceneData, inspectorState, undoHistory, viewportCameraState, viewportDisplayState, viewportGizmoState);
+        const EditorUiActions viewportActions = drawViewport(
+            layout,
+            forceLayout,
+            sceneData,
+            inspectorState,
+            undoHistory,
+            backgroundTask,
+            viewportCameraState,
+            viewportDisplayState,
+            viewportGizmoState
+        );
         if (viewportSettingsDiffer(buildSettings, viewportCameraState, viewportDisplayState)) {
             captureViewportSettings(buildSettings, viewportCameraState, viewportDisplayState);
+            captureSceneViewportCameraSettings(buildSettings, sceneData.scenePath, viewportCameraState);
             saveBuildSettings(buildSettings);
         }
         drawInspector(layout, forceLayout, sceneData, inspectorState, undoHistory);
-        drawAssetsConsole(layout, forceLayout, sceneData);
+        drawAssetsConsole(layout, forceLayout, sceneData, assetsConsoleView);
+        drawSceneFileDialog(
+            sceneFileDialogState,
+            sceneData,
+            buildSettings,
+            inspectorState,
+            viewportCameraState,
+            viewportDisplayState,
+            undoHistory,
+            forceLayout
+        );
+        drawDeleteSceneDialog(
+            deleteSceneDialogState,
+            sceneData,
+            buildSettings,
+            inspectorState,
+            viewportCameraState,
+            viewportDisplayState,
+            undoHistory,
+            forceLayout
+        );
         const EditorUiActions modalActions = drawBuildModal(buildModalState, sceneData, buildSettings, backgroundTask);
+        drawTaskLoadingPopup(backgroundTask);
+        if (drawExitPromptDialog(exitPromptState, sceneData)) {
+            shouldQuit = true;
+        }
         forceLayout = false;
 
         auto runRequestedTask = [&](EditorTaskKind taskKind) {
@@ -5887,7 +6426,9 @@ int main() {
                 appendConsoleLine(sceneData, "> Build flow stopped because Save Scene failed.");
                 return;
             }
-            sceneData.buildOutputLines.clear();
+            if (taskKind != EditorTaskKind::RunDesktop) {
+                sceneData.buildOutputLines.clear();
+            }
             startEditorTask(backgroundTask, sceneData, buildSettings, taskKind);
         };
 
@@ -5899,6 +6440,8 @@ int main() {
             runRequestedTask(EditorTaskKind::UploadNano);
         } else if (modalActions.buildAndUploadNano) {
             runRequestedTask(EditorTaskKind::BuildAndUploadNano);
+        } else if (viewportActions.runDesktop) {
+            runRequestedTask(EditorTaskKind::RunDesktop);
         } else if (modalActions.runDesktop) {
             runRequestedTask(EditorTaskKind::RunDesktop);
         }

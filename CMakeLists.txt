@@ -96,7 +96,10 @@ if(NUT_BUILD_SCENE_EDITOR)
     target_link_libraries(imgui_color_text_edit PUBLIC imgui)
 
     add_executable(NutSceneEditor
-        tools/scene_editor/main.cpp
+        tools/scene_editor/src/main.cpp
+        tools/scene_editor/src/EditorBuildSettings.cpp
+        tools/scene_editor/src/EditorSceneCatalog.cpp
+        tools/scene_editor/src/EditorUtils.cpp
         tools/scene_compiler/ScenePipeline.cpp
         src/scene/Json.cpp
         src/core/ObjLoader.cpp
