@@ -18,11 +18,11 @@
       "children": [],
       "enabled": true,
       "mesh": "assets/models/cube.obj",
-      "name": "Cloud",
+      "name": "Cloud Copy Copy",
       "position": [
-        3.0622,
+        -9.50333,
         0,
-        15.6632
+        -7.48665
       ],
       "rotation": [
         0,
@@ -36,18 +36,49 @@
       ],
       "scripts": [
         {
-          "type": "AutoTranslateScript",
+          "axis": "z",
+          "maxValue": 15,
+          "minValue": -9,
+          "type": "AutoTranslateWrapScript",
           "unitsPerSecond": [
             0,
             0,
             -5
           ]
-        },
+        }
+      ]
+    },
+    {
+      "children": [],
+      "enabled": true,
+      "mesh": "assets/models/cube.obj",
+      "name": "Cloud Copy Copy",
+      "position": [
+        7.53907,
+        0,
+        -4.42984
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        1.68088,
+        0.238023,
+        2.68212
+      ],
+      "scripts": [
         {
           "axis": "z",
           "maxValue": 15,
           "minValue": -9,
-          "type": "WrapPositionScript"
+          "type": "AutoTranslateWrapScript",
+          "unitsPerSecond": [
+            0,
+            0,
+            -5
+          ]
         }
       ]
     },
@@ -73,18 +104,49 @@
       ],
       "scripts": [
         {
-          "type": "AutoTranslateScript",
+          "axis": "z",
+          "maxValue": 15,
+          "minValue": -9,
+          "type": "AutoTranslateWrapScript",
           "unitsPerSecond": [
             0,
             0,
             -5
           ]
-        },
+        }
+      ]
+    },
+    {
+      "children": [],
+      "enabled": true,
+      "mesh": "assets/models/cube.obj",
+      "name": "Cloud Copy Copy",
+      "position": [
+        10.0489,
+        0,
+        6.69982
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        1.68088,
+        0.238023,
+        2.68212
+      ],
+      "scripts": [
         {
           "axis": "z",
           "maxValue": 15,
           "minValue": -9,
-          "type": "WrapPositionScript"
+          "type": "AutoTranslateWrapScript",
+          "unitsPerSecond": [
+            0,
+            0,
+            -5
+          ]
         }
       ]
     },
@@ -110,18 +172,15 @@
       ],
       "scripts": [
         {
-          "type": "AutoTranslateScript",
+          "axis": "z",
+          "maxValue": 15,
+          "minValue": -9,
+          "type": "AutoTranslateWrapScript",
           "unitsPerSecond": [
             0,
             0,
             -5
           ]
-        },
-        {
-          "axis": "z",
-          "maxValue": 15,
-          "minValue": -9,
-          "type": "WrapPositionScript"
         }
       ]
     },
@@ -147,18 +206,15 @@
       ],
       "scripts": [
         {
-          "type": "AutoTranslateScript",
+          "axis": "z",
+          "maxValue": 15,
+          "minValue": -9,
+          "type": "AutoTranslateWrapScript",
           "unitsPerSecond": [
             0,
             0,
             -5
           ]
-        },
-        {
-          "axis": "z",
-          "maxValue": 15,
-          "minValue": -9,
-          "type": "WrapPositionScript"
         }
       ]
     }

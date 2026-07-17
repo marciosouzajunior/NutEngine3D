@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AutoTranslateScript.h"
+#include "AutoTranslateWrapScript.h"
 #include "ClampPositionScript.h"
 #include "GameControllerScript.h"
 #include "PlayerMoveScript.h"
@@ -24,6 +25,10 @@ inline uint16_t scriptIdFromName(const std::string& name) {
 
     if (name == AutoTranslateScript::kTypeName) {
         return AutoTranslateScript::kScriptId;
+    }
+
+    if (name == AutoTranslateWrapScript::kTypeName) {
+        return AutoTranslateWrapScript::kScriptId;
     }
 
     if (name == GameControllerScript::kTypeName) {
@@ -60,6 +65,8 @@ inline const char* scriptNameFromId(uint16_t scriptId) {
         return SpinScript::kTypeName;
     case AutoTranslateScript::kScriptId:
         return AutoTranslateScript::kTypeName;
+    case AutoTranslateWrapScript::kScriptId:
+        return AutoTranslateWrapScript::kTypeName;
     case GameControllerScript::kScriptId:
         return GameControllerScript::kTypeName;
     case PlayerMoveScript::kScriptId:

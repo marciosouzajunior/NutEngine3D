@@ -1,5 +1,6 @@
 #include "GameScriptDispatcher.h"
 #include "AutoTranslateScript.h"
+#include "AutoTranslateWrapScript.h"
 #include "ClampPositionScript.h"
 #include "GameControllerScript.h"
 #include "PlayerMoveScript.h"
@@ -26,6 +27,9 @@ void updateScripts(RuntimeScene& scene, float deltaTime) {
             break;
         case AutoTranslateScript::kScriptId:
             AutoTranslateScript::update(*instance, *object, scene.inputState(), deltaTime);
+            break;
+        case AutoTranslateWrapScript::kScriptId:
+            AutoTranslateWrapScript::update(*instance, *object, scene.inputState(), deltaTime);
             break;
         case GameControllerScript::kScriptId:
             GameControllerScript::update(*instance, *object, scene.inputState(), deltaTime);

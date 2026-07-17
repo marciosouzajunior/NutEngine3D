@@ -16,6 +16,7 @@
 
 // Scripts available to scenes shipped in this firmware.
 #include "../../../assets/scripts/AutoTranslateScript.cpp"
+#include "../../../assets/scripts/AutoTranslateWrapScript.cpp"
 #include "../../../assets/scripts/ClampPositionScript.cpp"
 #include "../../../assets/scripts/GameControllerScript.cpp"
 #include "../../../assets/scripts/PulseScaleScript.cpp"

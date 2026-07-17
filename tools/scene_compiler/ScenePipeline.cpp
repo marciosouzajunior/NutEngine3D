@@ -269,6 +269,39 @@ bool encodeBinaryScriptConfig(
         writeF32(out, static_cast<float>(unitsPerSecond[2]));
         return true;
     }
+    case nut::game::AutoTranslateWrapScript::kScriptId: {
+        float axis = 2.0f;
+        const nut::Json& axisValue = script.get("axis");
+        if (axisValue.isString()) {
+            const std::string axisName = axisValue.asString("z");
+            if (axisName == "x" || axisName == "X") {
+                axis = 0.0f;
+            } else if (axisName == "y" || axisName == "Y") {
+                axis = 1.0f;
+            }
+        } else {
+            axis = static_cast<float>(axisValue.asNumber(2.0));
+        }
+
+        const std::vector<double> unitsPerSecond = readVec3(script.get("unitsPerSecond"), {0.0, 0.0, 0.0});
+        float speed = static_cast<float>(unitsPerSecond[2]);
+        if (axis <= 0.5f) {
+            speed = static_cast<float>(unitsPerSecond[0]);
+        } else if (axis <= 1.5f) {
+            speed = static_cast<float>(unitsPerSecond[1]);
+        }
+
+        const float minValue = static_cast<float>(script.get("minValue").asNumber(-8.0));
+        const float maxValue = static_cast<float>(script.get("maxValue").asNumber(8.0));
+        const int16_t packedMin = static_cast<int16_t>(minValue * 100.0f);
+        const int16_t packedMax = static_cast<int16_t>(maxValue * 100.0f);
+
+        writeU8(out, static_cast<std::uint8_t>(axis));
+        writeF32(out, speed);
+        writeI16(out, packedMin);
+        writeI16(out, packedMax);
+        return true;
+    }
     case nut::game::GameControllerScript::kScriptId:
         return true;
     case nut::game::PlayerMoveScript::kScriptId: {

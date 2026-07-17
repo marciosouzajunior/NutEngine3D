@@ -323,6 +323,7 @@ struct EditorTaskInput {
 
 struct NanoBudgetIndicator {
     std::string label;
+    std::string tooltip;
     ImU32 color = motif::PanelShadow;
 };
 
@@ -2176,7 +2177,7 @@ EditorUiActions drawToolbar(float menuHeight, const EditorSceneData& sceneData, 
     ImGui::SameLine();
 
     if (sceneData.loaded) {
-        if (ImGui::Button("Build", ImVec2(96.0f, 0.0f))) {
+        if (ImGui::Button("Build...", ImVec2(96.0f, 0.0f))) {
             actions.openBuildModal = true;
         }
         ImGui::SameLine(0.0f, 2.0f);
@@ -2194,7 +2195,7 @@ EditorUiActions drawToolbar(float menuHeight, const EditorSceneData& sceneData, 
         }
     } else {
         ImGui::BeginDisabled();
-        ImGui::Button("Build", ImVec2(96.0f, 0.0f));
+        ImGui::Button("Build...", ImVec2(96.0f, 0.0f));
         ImGui::SameLine(0.0f, 2.0f);
         ImGui::ArrowButton("##BuildQuickActionsDisabled", ImGuiDir_Down);
         ImGui::EndDisabled();
@@ -2220,6 +2221,11 @@ EditorUiActions drawToolbar(float menuHeight, const EditorSceneData& sceneData, 
             "%s",
             nanoIndicator.label.c_str()
         );
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !nanoIndicator.tooltip.empty()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted(nanoIndicator.tooltip.c_str());
+            ImGui::EndTooltip();
+        }
         if (!status.empty()) {
             ImGui::SameLine();
             ImGui::TextDisabled("|");
@@ -2632,26 +2638,19 @@ NanoBudgetIndicator buildNanoBudgetIndicator(const EditorSceneData& sceneData) {
     NanoBudgetIndicator indicator;
     if (!sceneData.loaded) {
         indicator.label = "Nano: Scene error";
+        indicator.tooltip = "Scene data is not loaded.";
         indicator.color = IM_COL32(180, 92, 92, 255);
         return indicator;
     }
 
     if (!sceneData.hasSceneAnalysis) {
         indicator.label = "Nano: Unavailable";
+        indicator.tooltip = "Scene analysis is not available.";
         indicator.color = motif::PanelShadow;
         return indicator;
     }
 
     const nut::tooling::SceneRequirements& r = sceneData.sceneAnalysis.requirements;
-    const float testedLimitUsage = std::max({
-        100.0f * static_cast<float>(r.objects) / 5.0f,
-        100.0f * static_cast<float>(r.scripts) / 3.0f,
-        100.0f * static_cast<float>(r.maxVerticesPerMesh) / 48.0f,
-        100.0f * static_cast<float>(r.maxEdgesPerMesh) / 120.0f,
-        100.0f * static_cast<float>(r.maxChildrenPerObject) / 4.0f,
-        100.0f * static_cast<float>(r.maxScriptsPerObject) / 3.0f
-    });
-    const int roundedUsagePercent = static_cast<int>(testedLimitUsage + 0.5f);
     const bool exceedsFormatLimit =
         r.rootObjects > 0xFFFFu ||
         r.objects > 0xFFFFu ||
@@ -2662,31 +2661,42 @@ NanoBudgetIndicator buildNanoBudgetIndicator(const EditorSceneData& sceneData) {
         r.stringTableBytes > 0xFFFFu ||
         r.maxVerticesPerMesh > 0xFFFFu ||
         r.maxEdgesPerMesh > 0xFFFFu;
-    const bool nearTestedLimit =
-        r.objects > 5 ||
-        r.scripts > 3 ||
-        r.maxVerticesPerMesh > 48 ||
-        r.maxEdgesPerMesh > 120 ||
-        r.maxChildrenPerObject > 4 ||
-        r.maxScriptsPerObject > 3;
-    const bool exceedsComfort =
-        r.objects > 4 ||
-        r.scripts > 3 ||
-        r.maxVerticesPerMesh > 40 ||
-        r.maxEdgesPerMesh > 84;
 
     if (exceedsFormatLimit) {
         indicator.label = "Nano: Invalid";
+        indicator.tooltip = "Scene requirements exceed the current serialized format limits.";
         indicator.color = IM_COL32(180, 92, 92, 255);
-    } else if (nearTestedLimit) {
-        indicator.label = "Nano budget: " + std::to_string(roundedUsagePercent) + "%";
-        indicator.color = IM_COL32(196, 146, 64, 255);
-    } else if (exceedsComfort) {
-        indicator.label = "Nano budget: " + std::to_string(roundedUsagePercent) + "%";
-        indicator.color = IM_COL32(196, 146, 64, 255);
     } else {
-        indicator.label = "Nano budget: " + std::to_string(roundedUsagePercent) + "%";
-        indicator.color = IM_COL32(74, 132, 82, 255);
+        const float cpuUsage = std::max({
+            100.0f * static_cast<float>(r.objects) / 6.0f,
+            100.0f * static_cast<float>(r.maxVerticesPerMesh) / 48.0f,
+            100.0f * static_cast<float>(r.maxEdgesPerMesh) / 120.0f,
+            100.0f * static_cast<float>(r.maxChildrenPerObject) / 4.0f
+        });
+        const float ramUsage = std::max({
+            100.0f * static_cast<float>(r.objects) / 6.0f,
+            100.0f * static_cast<float>(r.scripts) / 6.0f,
+            100.0f * static_cast<float>(r.maxScriptsPerObject) / 3.0f,
+            100.0f * static_cast<float>(r.stringTableBytes) / 192.0f
+        });
+
+        const int roundedCpuPercent = static_cast<int>(cpuUsage + 0.5f);
+        const int roundedRamPercent = static_cast<int>(ramUsage + 0.5f);
+        const float worstUsage = std::max(cpuUsage, ramUsage);
+
+        indicator.label =
+            "Nano CPU " + std::to_string(roundedCpuPercent) + "% | RAM " + std::to_string(roundedRamPercent) + "%";
+        indicator.tooltip =
+            "CPU heuristic uses objects, mesh vertices/edges, and child count.\n"
+            "RAM heuristic uses objects, total scripts, scripts per object, and string table bytes.";
+
+        if (worstUsage > 100.0f) {
+            indicator.color = IM_COL32(180, 92, 92, 255);
+        } else if (worstUsage > 85.0f) {
+            indicator.color = IM_COL32(196, 146, 64, 255);
+        } else {
+            indicator.color = IM_COL32(74, 132, 82, 255);
+        }
     }
 
     return indicator;
@@ -7111,7 +7121,17 @@ int main() {
             startEditorTask(backgroundTask, sceneData, buildSettings, taskKind, showLoadingPopup);
         };
 
-        if (toolbarActions.compileScene) {
+        if (menuActions.compileScene) {
+            runRequestedTask(EditorTaskKind::CompileScene, true);
+        } else if (menuActions.buildNano) {
+            runRequestedTask(EditorTaskKind::BuildNano, true);
+        } else if (menuActions.uploadNano) {
+            runRequestedTask(EditorTaskKind::UploadNano, true);
+        } else if (menuActions.buildAndUploadNano) {
+            runRequestedTask(EditorTaskKind::BuildAndUploadNano, true);
+        } else if (menuActions.runDesktop) {
+            runRequestedTask(EditorTaskKind::RunDesktop, true);
+        } else if (toolbarActions.compileScene) {
             runRequestedTask(EditorTaskKind::CompileScene, true);
         } else if (toolbarActions.buildAndUploadNano) {
             runRequestedTask(EditorTaskKind::BuildAndUploadNano, true);

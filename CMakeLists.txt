@@ -27,6 +27,7 @@ add_library(NutEngineRuntime STATIC
     src/core/SceneManager.cpp
     src/core/Script.cpp
     assets/scripts/AutoTranslateScript.cpp
+    assets/scripts/AutoTranslateWrapScript.cpp
     assets/scripts/ClampPositionScript.cpp
     assets/scripts/GameControllerScript.cpp
     assets/scripts/PulseScaleScript.cpp

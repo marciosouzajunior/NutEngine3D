@@ -217,37 +217,6 @@ private:
         return projectPoint(vertex, cameraPosition, cameraViewTrig, halfWidth, halfHeight, outPoint);
     }
 
-    uint16_t countVisibleEdges(
-        const uint8_t* sceneData,
-        uint16_t edgeBaseOffset,
-        uint16_t edgeCount,
-        uint8_t vertexStart,
-        uint8_t vertexCount
-    ) const {
-        uint16_t visibleEdges = 0;
-        const size_t cacheLimit = static_cast<size_t>(vertexStart) + static_cast<size_t>(vertexCount);
-        if (cacheLimit > m_cachedVertices.size()) {
-            return 0;
-        }
-
-        for (uint16_t edgeIndex = 0; edgeIndex < edgeCount; ++edgeIndex) {
-            const size_t edgeOffset = static_cast<size_t>(edgeBaseOffset) + static_cast<size_t>(edgeIndex) * 4;
-            const uint16_t a = readU16(sceneData, edgeOffset);
-            const uint16_t b = readU16(sceneData, edgeOffset + 2);
-            if (a >= vertexCount || b >= vertexCount) {
-                continue;
-            }
-
-            const CachedVertex& v0 = m_cachedVertices[static_cast<size_t>(vertexStart) + a];
-            const CachedVertex& v1 = m_cachedVertices[static_cast<size_t>(vertexStart) + b];
-            if (v0.visible && v1.visible) {
-                ++visibleEdges;
-            }
-        }
-
-        return visibleEdges;
-    }
-
     void cacheBinaryMesh(
         const RuntimeScene& scene,
         const GameObject* object,
@@ -332,10 +301,6 @@ private:
         }
 
         m_lastAttemptedEdges = static_cast<uint16_t>(m_lastAttemptedEdges + edgeCount);
-        m_lastVisibleEdges = static_cast<uint16_t>(
-            m_lastVisibleEdges + countVisibleEdges(sceneData, edgeBaseOffset, edgeCount, vertexStart, static_cast<uint8_t>(vertexCount))
-        );
-
     }
 
 public:
